@@ -1,0 +1,24 @@
+name: ${COMPOSE_PROJECT_NAME:-gdastro}
+
+services:
+  workspace:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:cached
+      # keep node_modules inside the container — far faster than a bind mount,
+      # and avoids native-module mismatches with the host OS
+      - node-modules:/workspace/node_modules
+    environment:
+      ASTRO_TELEMETRY_DISABLED: "1"
+      LOCAL_URL: ${LOCAL_URL:-http://localhost:4321}
+      LIVE_URL: ${LIVE_URL:-}
+    working_dir: /workspace
+    command: sleep infinity
+    ports:
+      - "${ASTRO_PORT:-4321}:4321"   # dev server
+      - "${PREVIEW_PORT:-4322}:4322" # `astro preview` of the real build
+
+volumes:
+  node-modules:

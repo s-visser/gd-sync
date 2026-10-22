@@ -1,0 +1,32 @@
+{
+  "name": "__SITE__ (Astro)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "workspace",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+
+  "forwardPorts": [4321, 4322],
+  "portsAttributes": {
+    "4321": { "label": "Astro dev", "onAutoForward": "openBrowserOnce" },
+    "4322": { "label": "Astro preview (production build)" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "remoteUser": "node",
+
+  "customizations": {
+    "jetbrains": {
+      "backend": "WebStorm",
+      "plugins": ["org.jetbrains.plugins.node-remote-interpreter", "Git4Idea"]
+    },
+    "vscode": {
+      "extensions": [
+        "astro-build.astro-vscode",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "editorconfig.editorconfig"
+      ]
+    }
+  }
+}

@@ -1,0 +1,93 @@
+name: Sync server into main
+
+# Pulls the live server's files onto main. This is what keeps main honest when
+# someone edits via cPanel, or a WordPress update rewrites a tracked file.
+# Runs nightly, on demand, and automatically before any PR merge (see verify-main).
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      changed:
+        description: Whether the server had drifted from main
+        value: ${{ jobs.sync.outputs.changed }}
+
+concurrency:
+  group: server-${{ github.repository }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Load site manifest
+        run: cat .gdsync >> "$GITHUB_ENV"
+
+      - name: Authorise SSH
+        env:
+          SSH_KEY: ${{ secrets.GD_SSH_KEY }}
+          SSH_HOST: ${{ secrets.GD_SSH_HOST }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p "${{ secrets.GD_SSH_PORT || 22 }}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Download tracked paths from the server
+        env:
+          T: ${{ secrets.GD_SSH_USER }}@${{ secrets.GD_SSH_HOST }}
+          P: ${{ secrets.GD_SSH_PORT || 22 }}
+        run: |
+          set -eu
+          RSH="ssh -p $P -o StrictHostKeyChecking=accept-new"
+          COMMON="-az --delete --no-perms --no-owner --no-group --omit-dir-times
+                  --exclude .git --exclude .DS_Store --exclude node_modules
+                  --exclude '*.log' --exclude wp-content/cache"
+
+          if [ -n "${PUBLISH_DIR:-}" ]; then
+            echo "Static site — source lives in this repo, nothing to pull back."
+            exit 0
+          fi
+
+          for p in $TRACKED; do
+            if ssh -p "$P" "$T" "test -d '$REMOTE_ROOT/$p'"; then
+              mkdir -p "$p"; src="$REMOTE_ROOT/$p/"
+            else
+              mkdir -p "$(dirname "$p")"; src="$REMOTE_ROOT/$p"
+            fi
+            echo "<- $p"
+            rsync $COMMON -e "$RSH" "$T:$src" "$p"
+          done
+
+      - name: Commit any drift
+        id: commit
+        run: |
+          git config user.name  "gd-sync"
+          git config user.email "gd-sync@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "main already matches the server." >> "$GITHUB_STEP_SUMMARY"
+          else
+            git commit -m "[server-sync] Live server state $(date -u '+%Y-%m-%d %H:%M UTC')"
+            git push origin main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Server drift pulled into main"
+              echo '```'
+              git show --stat --oneline HEAD | head -40
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi

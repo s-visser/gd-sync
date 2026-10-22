@@ -1,0 +1,59 @@
+name: Gate merges into main
+
+# Nothing merges into main until main matches the live server.
+#
+# Step 1 pulls the server's current state onto main.
+# Step 2 fails the check if your branch doesn't already contain that state —
+#        which is exactly the situation where merging would silently overwrite
+#        a change someone made on the live site.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh-main:
+    uses: ./.github/workflows/sync-from-server.yml
+    secrets: inherit
+
+  gate:
+    needs: refresh-main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check this branch contains the server's current state
+        run: |
+          set -eu
+          git fetch origin main
+          MAIN=$(git rev-parse origin/main)
+          HEAD_SHA=$(git rev-parse HEAD)
+
+          if git merge-base --is-ancestor "$MAIN" "$HEAD_SHA"; then
+            echo "Branch is up to date with the live server." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "### Out of date with the live server"
+            echo ""
+            echo "The server has changes that your branch doesn't have yet:"
+            echo '```'
+            git log --oneline --no-decorate "$HEAD_SHA..$MAIN" | head -20
+            echo '```'
+            echo "Bring them in, then push again:"
+            echo '```'
+            echo "gd merge ${{ github.event.repository.name }}"
+            echo "# or by hand:  git fetch origin main && git merge origin/main"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::error::Your branch is behind the live server. Merge origin/main first."
+          exit 1

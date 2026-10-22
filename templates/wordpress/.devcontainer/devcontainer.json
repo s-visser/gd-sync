@@ -1,0 +1,39 @@
+{
+  "name": "__SITE__ (WordPress)",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "workspace",
+  "workspaceFolder": "/workspace",
+  "shutdownAction": "stopCompose",
+
+  "forwardPorts": [8080, 8025, 13306],
+  "portsAttributes": {
+    "8080":  { "label": "WordPress", "onAutoForward": "notify" },
+    "8025":  { "label": "Mailpit (all outgoing email lands here)" },
+    "13306": { "label": "MariaDB" }
+  },
+
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+
+  "remoteUser": "vscode",
+
+  "customizations": {
+    "jetbrains": {
+      "backend": "PhpStorm",
+      "plugins": [
+        "com.jetbrains.php",
+        "org.jetbrains.plugins.phpstorm-wordpress",
+        "Git4Idea"
+      ]
+    },
+    "vscode": {
+      "extensions": [
+        "bmewburn.vscode-intelephense-client",
+        "xdebug.php-debug",
+        "editorconfig.editorconfig"
+      ],
+      "settings": {
+        "php.validate.executablePath": "/usr/local/bin/php"
+      }
+    }
+  }
+}
