@@ -1,10 +1,10 @@
-# Working on gd
+# Working on gd-sync
 
-`gd` is a single bash script plus a folder of templates. There is no build step.
+`gd-sync` is a single bash script plus a folder of templates. There is no build step.
 
 ```
-gd                      the whole program
-install.sh              symlinks gd onto PATH, checks tools, runs first setup
+gd-sync                 the whole program
+install.sh              symlinks gd-sync onto PATH, checks tools, runs first setup
 templates/wordpress/    devcontainer copied into new WordPress sites
 templates/astro/        devcontainer copied into new Astro sites
 templates/github/       the three workflows copied into every new site
@@ -15,12 +15,12 @@ templates/github/       the three workflows copied into every new site
 `install.sh` installs a **symlink**, so edits here take effect immediately.
 No reinstall needed.
 
-Point gd at a throwaway config and a throwaway registry while testing:
+Point gd-sync at a throwaway config and a throwaway registry while testing:
 
 ```bash
-export GD_HOME=/tmp/gd-test
-gd config --setup
-gd new
+export GD_HOME=/tmp/gd-sync-test
+gd-sync config --setup
+gd-sync new
 ```
 
 `GD_TEMPLATES` overrides the template folder, `GD_STATE` the SSH control-socket
@@ -41,7 +41,7 @@ directory.
 
 `write_gitignore`, `write_manifest`, `write_docs`, `write_devcontainer`,
 `write_workflows` and `write_runconfigs` each own one part of a site's
-scaffolding. `gd scaffold` re-runs all of them in an existing site, so changes
+scaffolding. `gd-sync scaffold` re-runs all of them in an existing site, so changes
 roll out to sites that already exist.
 
 `write_docs` regenerates `GD.md` but never overwrites a site's own `README.md`.
@@ -49,9 +49,9 @@ roll out to sites that already exist.
 ## Checks before committing
 
 ```bash
-bash -n gd && bash -n install.sh
+bash -n gd-sync && bash -n install.sh
 ```
 
 There are no automated tests. The flows worth exercising by hand against a real
-site: `gd new`, `gd sync` with server-side drift, `gd merge` with a conflict,
-and `gd adopt` on a fresh clone.
+site: `gd-sync new`, `gd-sync sync` with server-side drift, `gd-sync merge` with a conflict,
+and `gd-sync adopt` on a fresh clone.

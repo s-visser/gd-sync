@@ -31,7 +31,7 @@ PHP
 fi
 
 # ---------------------------------------------------------------------------
-# If gd pulled a database dump, use it. Otherwise install a blank site.
+# If gd-sync pulled a database dump, use it. Otherwise install a blank site.
 # ---------------------------------------------------------------------------
 DUMP="$(ls -1t /workspace/_db/*.sql 2>/dev/null | head -1 || true)"
 

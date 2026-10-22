@@ -50,7 +50,7 @@ jobs:
             echo '```'
             echo "Bring them in, then push again:"
             echo '```'
-            echo "gd merge ${{ github.event.repository.name }}"
+            echo "gd-sync merge ${{ github.event.repository.name }}"
             echo "# or by hand:  git fetch origin main && git merge origin/main"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

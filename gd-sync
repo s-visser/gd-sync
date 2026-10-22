@@ -1,34 +1,34 @@
 #!/usr/bin/env bash
 #
-# gd — GoDaddy cPanel site toolkit. The server is the source of truth.
+# gd-sync — GoDaddy cPanel site toolkit. The server is the source of truth.
 #
-# Every site is its own folder, its own Git repo, its own config. Run gd from
+# Every site is its own folder, its own Git repo, its own config. Run gd-sync from
 # anywhere inside a site's folder and it works out which site you mean by
 # reading that repo's own .gdsync file. No site name to remember or type.
 #
-#   gd new                  create a new site: folder, repo, config, container
-#   gd adopt                register a folder you already have
-#   gd list                 every site gd knows about
-#   gd config               machine-wide settings (projects folder, GitHub owner)
+#   gd-sync new             create a new site: folder, repo, config, container
+#   gd-sync adopt           register a folder you already have
+#   gd-sync list            every site gd-sync knows about
+#   gd-sync config          machine-wide settings (projects folder, GitHub owner)
 #
-#   gd sync                 update main with the CURRENT SERVER CONTENTS
-#   gd merge [branch]       sync main from server, merge branch in, go live
-#   gd status               what differs between server and main (read-only)
-#   gd deploy               push main to the server by hand
+#   gd-sync sync            update main with the CURRENT SERVER CONTENTS
+#   gd-sync merge [branch]  sync main from server, merge branch in, go live
+#   gd-sync status          what differs between server and main (read-only)
+#   gd-sync deploy          push main to the server by hand
 #
-#   gd db                   download the live database into _db/
-#   gd up / gd down         start / stop the devcontainer
+#   gd-sync db              download the live database into _db/
+#   gd-sync up / down       start / stop the devcontainer
 #
-#   gd shell                SSH into the server
-#   gd key                  install your SSH key (stop typing passwords)
-#   gd secrets              push SSH secrets to GitHub so the workers can run
-#   gd scaffold             regenerate devcontainer + workflows + run configs
+#   gd-sync shell           SSH into the server
+#   gd-sync key             install your SSH key (stop typing passwords)
+#   gd-sync secrets         push SSH secrets to GitHub so the workers can run
+#   gd-sync scaffold        regenerate devcontainer + workflows + run configs
 #
 # Add --all to sync/status/db to run every registered site.
 
 set -euo pipefail
 
-GD_HOME="${GD_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/gd}"
+GD_HOME="${GD_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/gd-sync}"
 CONFIG="${GD_CONFIG:-$GD_HOME/config}"
 REGISTRY="${GD_REGISTRY:-$GD_HOME/repos}"
 STATE_DIR="${GD_STATE:-$HOME/.local/state/gd}"
@@ -69,11 +69,11 @@ ask() { # prompts on stderr so the answer can be captured cleanly
 #   .gdsync.local   gitignored. How to reach the server from this machine.
 #
 # There is no central config file. The registry is only a list of folders,
-# so that `gd list` and `--all` have something to walk.
+# so that `gd-sync list` and `--all` have something to walk.
 # =============================================================================
 
 # ------------------------------------------------------------ global cfg ----
-# Machine-wide preferences, so `gd new` can stop asking the same two questions.
+# Machine-wide preferences, so `gd-sync new` can stop asking the same two questions.
 #   PROJECTS_DIR  where new site folders are created
 #   GIT_OWNER     GitHub user or org that new repos belong to
 #   GIT_PRIVATE   true/false for new repos
@@ -104,7 +104,7 @@ load_config() {
 write_config() {
   mkdir -p "$(dirname "$CONFIG")"
   cat > "$CONFIG" <<EOF
-# gd — machine-wide settings. Per-site settings live in each repo's .gdsync.
+# gd-sync — machine-wide settings. Per-site settings live in each repo's .gdsync.
 PROJECTS_DIR=$PROJECTS_DIR
 GIT_OWNER=$GIT_OWNER
 GIT_PRIVATE=$GIT_PRIVATE
@@ -121,11 +121,11 @@ cmd_config() {
       printf '  %-14s %s\n' GIT_PRIVATE  "$GIT_PRIVATE"
       printf '  %-14s %s\n' DEFAULT_TYPE "$DEFAULT_TYPE"
       say ""
-      info "change one:  gd config PROJECTS_DIR ~/Sites"
-      info "or run the short setup again:  gd config --setup"
+      info "change one:  gd-sync config PROJECTS_DIR ~/Sites"
+      info "or run the short setup again:  gd-sync config --setup"
       ;;
     --setup|setup)
-      step "gd setup"
+      step "gd-sync setup"
       PROJECTS_DIR="$(ask 'Where should new site folders go?' "$PROJECTS_DIR")"
       PROJECTS_DIR="${PROJECTS_DIR/#\~/$HOME}"
       GIT_OWNER="$(ask 'GitHub owner for new repos (user or org):' "$GIT_OWNER")"
@@ -136,13 +136,13 @@ cmd_config() {
     *)
       local k="$1" v="${2:-}"
       k="$(printf '%s' "$k" | tr '[:lower:]' '[:upper:]')"
-      [ -n "$v" ] || die "usage: gd config $k <value>"
+      [ -n "$v" ] || die "usage: gd-sync config $k <value>"
       case "$k" in
         PROJECTS_DIR) PROJECTS_DIR="${v/#\~/$HOME}";;
         GIT_OWNER)    GIT_OWNER="$v";;
         GIT_PRIVATE)  GIT_PRIVATE="$v";;
         DEFAULT_TYPE) DEFAULT_TYPE="$v";;
-        *) die "Unknown setting '$k' — try: gd config";;
+        *) die "Unknown setting '$k' — try: gd-sync config";;
       esac
       write_config; ok "$k = $v"
       ;;
@@ -162,9 +162,9 @@ find_repo() { # walk up from a directory looking for .gdsync
 load_site() { # from an explicit repo path, or inferred from $PWD
   repo="${1:-}"
   if [ -z "$repo" ]; then
-    repo="$(find_repo)" || die "Not inside a gd site.
-  cd into one of your site folders, or create one with: gd new
-  (gd list shows the sites gd knows about)"
+    repo="$(find_repo)" || die "Not inside a gd-sync site.
+  cd into one of your site folders, or create one with: gd-sync new
+  (gd-sync list shows the sites gd-sync knows about)"
   fi
   [ -f "$repo/.gdsync" ] || die "No .gdsync in $repo"
 
@@ -209,7 +209,7 @@ need_server() { # only the commands that actually talk to the server
   for r in ssh_host ssh_user remote_root; do
     up="$(printf '%s' "$r" | tr '[:lower:]' '[:upper:]')"
     [ -n "${!r}" ] || die "$site has no $up on this machine.
-  Connection details live in $repo/.gdsync.local — run 'gd adopt' to fill them in."
+  Connection details live in $repo/.gdsync.local — run 'gd-sync adopt' to fill them in."
   done
 }
 
@@ -278,7 +278,7 @@ require_clean_tree() {
   warn "Uncommitted changes in $repo"
   in_repo status --short | sed 's/^/    /'
   confirm "Stash them and continue?" || die "Commit or stash first."
-  in_repo stash push -u -m "gd auto-stash $(date +%F_%H%M)"; STASHED=1
+  in_repo stash push -u -m "gd-sync auto-stash $(date +%F_%H%M)"; STASHED=1
 }
 restore_stash() {
   [ "${STASHED:-0}" = "1" ] || return 0
@@ -338,7 +338,7 @@ EOF
 
 write_manifest() {
   cat > "$repo/.gdsync" <<EOF
-# What this site is and where it deploys. This file IS the config — gd reads it
+# What this site is and where it deploys. This file IS the config — gd-sync reads it
 # to work out which site you are in, and the GitHub workers read it too.
 SITE=$site
 SITE_TYPE=$type
@@ -352,7 +352,7 @@ EXCLUDE=$exclude
 EOF
   cat > "$repo/.gdsync.local" <<EOF
 # How to reach the server from this machine. Not committed.
-# The GitHub workers use repository secrets instead — see: gd secrets
+# The GitHub workers use repository secrets instead — see: gd-sync secrets
 SSH_HOST=$ssh_host
 SSH_USER=$ssh_user
 SSH_PORT=$ssh_port
@@ -362,11 +362,11 @@ EOF
 write_docs() {
   # GD.md is the tool's own cheat sheet. Regenerated on every scaffold, so keep
   # it about concepts and the handful of commands that won't churn — anything
-  # version-specific belongs behind `gd help`.
+  # version-specific belongs behind `gd-sync help`.
   cat > "$repo/GD.md" <<'EOF'
 # Working on this site
 
-This project is managed by **gd**. Run gd from anywhere inside this folder —
+This project is managed by **gd-sync**. Run gd-sync from anywhere inside this folder —
 it works out which site you mean, the way git does.
 
 ## The one rule
@@ -377,28 +377,28 @@ You work on `develop`. Never edit files on the server by hand if you can help it
 ## A normal session
 
 ```
-gd sync        # pull the server's current state onto main
-gd db          # pull the live database (WordPress sites)
-gd up          # start the local site in Docker
-               # ... work on develop ...
-gd merge       # sync again, merge develop, go live
+gd-sync sync        # pull the server's current state onto main
+gd-sync db          # pull the live database (WordPress sites)
+gd-sync up          # start the local site in Docker
+                    # ... work on develop ...
+gd-sync merge       # sync again, merge develop, go live
 ```
 
-Start with `gd sync`. The site may have changed since you last looked —
+Start with `gd-sync sync`. The site may have changed since you last looked —
 a plugin update, or someone editing through the hosting panel.
 
 ## Commands
 
 | | |
 |---|---|
-| `gd sync` | update `main` with what's on the server right now |
-| `gd status` | what differs between server and your copy (changes nothing) |
-| `gd db` | download the live database into `_db/` |
-| `gd up` / `gd down` | start / stop the local Docker site |
-| `gd merge` | the safe way to go live: sync, merge, deploy |
-| `gd deploy` | upload by hand, skipping GitHub |
-| `gd shell` | SSH into the server |
-| `gd help` | everything else |
+| `gd-sync sync` | update `main` with what's on the server right now |
+| `gd-sync status` | what differs between server and your copy (changes nothing) |
+| `gd-sync db` | download the live database into `_db/` |
+| `gd-sync up` / `gd-sync down` | start / stop the local Docker site |
+| `gd-sync merge` | the safe way to go live: sync, merge, deploy |
+| `gd-sync deploy` | upload by hand, skipping GitHub |
+| `gd-sync shell` | SSH into the server |
+| `gd-sync help` | everything else |
 
 ## Files in here
 
@@ -412,19 +412,19 @@ a plugin update, or someone editing through the hosting panel.
 
 ## If something looks wrong
 
-`gd status` shows the difference without touching anything.
+`gd-sync status` shows the difference without touching anything.
 
 Every deploy backs the server up first, to `~/gd-backups/` on the server.
-`gd shell`, then unpack the tarball you want over the web root.
+`gd-sync shell`, then unpack the tarball you want over the web root.
 
 ## Working on a different machine
 
 ```
 git clone <this repo>
-cd <folder> && gd adopt
+cd <folder> && gd-sync adopt
 ```
 
-`gd adopt` asks for the SSH details, since those aren't committed.
+`gd-sync adopt` asks for the SSH details, since those aren't committed.
 EOF
 
   # The project README is the site's own — write it once and leave it alone.
@@ -560,7 +560,7 @@ cmd_sync() {
   if in_repo diff --cached --quiet; then
     ok "main already matches the server"
   else
-    in_repo -c user.email=gd@local -c user.name=gd \
+    in_repo -c user.email=gd-sync@local -c user.name=gd-sync \
       commit -qm "[server-sync] Live server state $(date '+%Y-%m-%d %H:%M')"
     ok "main updated from the server"
     in_repo diff --stat HEAD~1 HEAD | sed 's/^/    /'
@@ -589,7 +589,7 @@ cmd_merge() {
   if ! in_repo merge --no-ff --no-edit "$from"; then
     warn "Conflict between your work and the live server."
     in_repo diff --name-only --diff-filter=U | sed 's/^/    /'
-    info "Resolve in your IDE, then: git merge --continue && gd merge"
+    info "Resolve in your IDE, then: git merge --continue && gd-sync merge"
     exit 1
   fi
   ok "merged"
@@ -620,7 +620,7 @@ cmd_status() {
           "$SSH_TARGET:$src" "$repo/$p" 2>/dev/null | grep -v '^$' || true)"
     [ -n "$out" ] && { any=1; printf '  %s%s%s\n' "$B" "$p" "$N"; printf '%s\n' "$out" | sed 's/^/      /'; }
   done
-  [ "$any" = "0" ] && ok "Identical" || info "Run 'gd sync' to fold these into main"
+  [ "$any" = "0" ] && ok "Identical" || info "Run 'gd-sync sync' to fold these into main"
 }
 
 cmd_deploy() {
@@ -693,9 +693,9 @@ cmd_db() {
      && [ -n "$(docker compose -f "$dc" ps -q db 2>/dev/null)" ]; then
     step "Loading it into the running devcontainer"
     docker compose -f "$dc" exec -T workspace bash .devcontainer/post-create.sh >/dev/null 2>&1 \
-      && ok "Local site now matches live" || info "Restart the container to import: gd down && gd up"
+      && ok "Local site now matches live" || info "Restart the container to import: gd-sync down && gd-sync up"
   else
-    info "Start the devcontainer and it imports automatically: gd up"
+    info "Start the devcontainer and it imports automatically: gd-sync up"
   fi
 }
 
@@ -718,14 +718,14 @@ cmd_secrets() {
   load_site; need_server
   command -v gh >/dev/null || die "GitHub CLI (gh) not installed — https://cli.github.com"
   local key="$HOME/.ssh/id_ed25519"
-  [ -f "$key" ] || die "No SSH key at $key — run: gd key"
+  [ -f "$key" ] || die "No SSH key at $key — run: gd-sync key"
   step "Pushing SSH secrets to GitHub"
   ( cd "$repo" && gh secret set GD_SSH_KEY < "$key" \
     && gh secret set GD_SSH_HOST --body "$ssh_host" \
     && gh secret set GD_SSH_USER --body "$ssh_user" \
     && gh secret set GD_SSH_PORT --body "$ssh_port" )
   ok "GD_SSH_KEY, GD_SSH_HOST, GD_SSH_USER, GD_SSH_PORT set"
-  info "Run 'gd key' first if you haven't, or the key won't be authorised."
+  info "Run 'gd-sync key' first if you haven't, or the key won't be authorised."
 }
 
 # =================================================================== new =====
@@ -743,7 +743,7 @@ cmd_new() {
 
   rp="$(ask 'Local folder:' "$PROJECTS_DIR/$name")"
   rp="${rp/#\~/$HOME}"
-  [ -f "$rp/.gdsync" ] && die "$rp is already a gd site — use 'gd adopt' there instead"
+  [ -f "$rp/.gdsync" ] && die "$rp is already a gd-sync site — use 'gd-sync adopt' there instead"
 
   ghname="$(ask 'GitHub repo (owner/name, or "none"):' "${GIT_OWNER:+$GIT_OWNER/$name}")"
   case "$ghname" in none|None|NONE|-|"") ghname="";; esac
@@ -786,7 +786,7 @@ cmd_new() {
 
   in_repo add -A
   in_repo rev-parse --verify -q HEAD >/dev/null 2>&1 \
-    || in_repo -c user.email=gd@local -c user.name=gd commit -qm "Scaffold $name"
+    || in_repo -c user.email=gd-sync@local -c user.name=gd-sync commit -qm "Scaffold $name"
   in_repo rev-parse --verify -q main >/dev/null 2>&1 || in_repo branch -M main
   ok "repo created"
 
@@ -794,10 +794,10 @@ cmd_new() {
   rsh "echo ok" >/dev/null || die "Cannot reach $SSH_TARGET:$ssh_port
   Enable it: GoDaddy dashboard -> Settings tab -> SSH access -> Manage -> toggle on.
   Your cPanel password is the SSH password.
-  Everything else is written — correct $repo/.gdsync.local, then run: gd sync"
+  Everything else is written — correct $repo/.gdsync.local, then run: gd-sync sync"
   ok "SSH works"
   rsh "test -d '$remote_root'" || die "Remote path not found: $remote_root
-  Fix REMOTE_ROOT in $repo/.gdsync, then run: gd sync"
+  Fix REMOTE_ROOT in $repo/.gdsync, then run: gd-sync sync"
 
   confirm "Install an SSH key so you stop typing the password?" && cmd_key || true
 
@@ -818,9 +818,9 @@ cmd_new() {
                --source=. --remote=origin --push ) \
         || warn "Could not create $ghname — add the remote by hand"
       in_repo push -q -u origin main develop 2>/dev/null || true
-      cmd_secrets || warn "Set secrets later with: gd secrets"
+      cmd_secrets || warn "Set secrets later with: gd-sync secrets"
     else
-      warn "GitHub CLI not installed — create $ghname yourself, then: gd secrets"
+      warn "GitHub CLI not installed — create $ghname yourself, then: gd-sync secrets"
     fi
   fi
 
@@ -828,8 +828,8 @@ cmd_new() {
   ok "$name is ready."
   say ""
   info "cd $repo"
-  info "Open it in your JetBrains IDE and let it start the devcontainer, or: gd up"
-  info "From inside that folder gd needs no arguments: gd sync, gd merge, gd db"
+  info "Open it in your JetBrains IDE and let it start the devcontainer, or: gd-sync up"
+  info "From inside that folder gd-sync needs no arguments: gd-sync sync, gd-sync merge, gd-sync db"
 }
 
 # Register a folder that already has a .gdsync (a clone on a new machine,
@@ -837,7 +837,7 @@ cmd_new() {
 cmd_adopt() {
   local rp="${1:-$PWD}"
   rp="$(cd "$rp" 2>/dev/null && pwd)" || die "No such folder: ${1:-$PWD}"
-  rp="$(find_repo "$rp")" || die "$rp has no .gdsync — set a site up with: gd new"
+  rp="$(find_repo "$rp")" || die "$rp has no .gdsync — set a site up with: gd-sync new"
 
   repo="$rp"; load_site "$rp"
   if [ -z "$ssh_host" ] || [ -z "$ssh_user" ]; then
@@ -863,7 +863,7 @@ cmd_list() {
       && printf '  %s%-16s%s %-10s %s\n     %s%s%s\n' "$B" "$site" "$N" "$type" "$live_url" "$DIM" "$p" "$N" ) \
       || printf '  %s%s%s %s(unreadable)%s\n' "$B" "$p" "$N" "$R" "$N"
   done < <(registry_list)
-  [ "$any" = "1" ] || info "none yet — run: gd new"
+  [ "$any" = "1" ] || info "none yet — run: gd-sync new"
 }
 
 usage() { awk 'NR<3 {next} /^#/ {sub(/^# ?/,""); print; next} {exit}' "$SELF"; }
@@ -900,5 +900,5 @@ case "$CMD" in
   secrets)   cmd_secrets ;;
   scaffold)  cmd_scaffold ;;
   help|-h|--help) usage ;;
-  *)         die "Unknown command '$CMD' — try: gd help" ;;
+  *)         die "Unknown command '$CMD' — try: gd-sync help" ;;
 esac

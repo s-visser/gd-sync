@@ -1,4 +1,4 @@
-# gd
+# gd-sync
 
 Git-backed maintenance for GoDaddy cPanel sites you touch once a year.
 
@@ -6,7 +6,7 @@ Git-backed maintenance for GoDaddy cPanel sites you touch once a year.
 Nothing merges into `main` until `main` has been refreshed from the live server,
 and anything that lands on `main` gets deployed.
 
-`gd` works like `git`: it's a global command, and it acts on whichever site
+`gd-sync` works like `git`: it's a global command, and it acts on whichever site
 folder you're standing in. Outside one, it says so.
 
 ---
@@ -14,36 +14,36 @@ folder you're standing in. Outside one, it says so.
 ## Install (macOS)
 
 ```bash
-git clone <this-repo> ~/gd
-cd ~/gd && ./install.sh
+git clone <this-repo> ~/gd-sync
+cd ~/gd-sync && ./install.sh
 ```
 
-The installer checks your tools, symlinks `gd` onto your PATH, adds the PATH
+The installer checks your tools, symlinks `gd-sync` onto your PATH, adds the PATH
 line to `.zshrc` if needed, and runs first-time setup. It installs a symlink
-rather than a copy, so `git pull` in `~/gd` updates the command everywhere.
+rather than a copy, so `git pull` in `~/gd-sync` updates the command everywhere.
 
 Required: `git`, `ssh`, `rsync` (Xcode command line tools cover the first two).
 Optional: `docker` for devcontainers, `gh` for GitHub setup, `mysql-client`.
 
-macOS ships bash 3.2 and BSD userland; `gd` is written for both, so Homebrew
+macOS ships bash 3.2 and BSD userland; `gd-sync` is written for both, so Homebrew
 bash is not required.
 
 ## Global settings
 
 ```bash
-gd config                        # show
-gd config PROJECTS_DIR ~/Sites   # change one
-gd config --setup                # walk through them again
+gd-sync config                        # show
+gd-sync config PROJECTS_DIR ~/Sites   # change one
+gd-sync config --setup                # walk through them again
 ```
 
 | | |
 |---|---|
-| `PROJECTS_DIR` | where `gd new` creates site folders |
+| `PROJECTS_DIR` | where `gd-sync new` creates site folders |
 | `GIT_OWNER` | GitHub user or org for new repos |
 | `GIT_PRIVATE` | `true` / `false` for new repos |
 | `DEFAULT_TYPE` | `wordpress` or `astro` |
 
-Stored in `~/.config/gd/config`. With these set, `gd new` already knows the
+Stored in `~/.config/gd-sync/config`. With these set, `gd-sync new` already knows the
 folder and the GitHub repo name, so you just press enter.
 
 ---
@@ -51,7 +51,7 @@ folder and the GitHub repo name, so you just press enter.
 ## A new domain
 
 ```bash
-gd new
+gd-sync new
 ```
 
 Asks for the domain, short name, local folder, GitHub repo, site type, and the
@@ -63,7 +63,7 @@ key, pulls the live files onto `main`, offers to pull the database, branches
 Already have a folder with a `.gdsync` in it — a clone on another Mac, say?
 
 ```bash
-gd adopt
+gd-sync adopt
 ```
 
 It asks only for the connection details, which are deliberately not committed.
@@ -73,17 +73,17 @@ It asks only for the connection details, which are deliberately not committed.
 Run these from anywhere inside a site folder. No site name, ever.
 
 ```bash
-gd sync       # main := the live server
-gd merge      # sync, merge develop, go live   ← the normal one
-gd status     # what's drifted (read-only)
-gd db         # live database -> _db/, imported into the container
-gd up / down  # start / stop the devcontainer
-gd deploy     # manual rsync, if you'd rather not involve GitHub
-gd shell      # SSH in
+gd-sync sync       # main := the live server
+gd-sync merge      # sync, merge develop, go live   ← the normal one
+gd-sync status     # what's drifted (read-only)
+gd-sync db         # live database -> _db/, imported into the container
+gd-sync up / down  # start / stop the devcontainer
+gd-sync deploy     # manual rsync, if you'd rather not involve GitHub
+gd-sync shell      # SSH in
 ```
 
-`gd sync --all`, `gd status --all` and `gd db --all` walk every registered site
-and can be run from anywhere.
+`gd-sync sync --all`, `gd-sync status --all` and `gd-sync db --all` walk every
+registered site and can be run from anywhere.
 
 ---
 
@@ -96,8 +96,8 @@ There is no central site list. Each repo carries its own:
 | `.gdsync` | yes | what the site is and where it deploys — also read by the GitHub workers |
 | `.gdsync.local` | no | SSH host, user and port for this machine |
 
-`~/.config/gd/repos` is only a list of folders, so `gd list` and `--all` have
-something to walk. Delete it and nothing breaks; `gd adopt` rebuilds entries.
+`~/.config/gd-sync/repos` is only a list of folders, so `gd-sync list` and `--all` have
+something to walk. Delete it and nothing breaks; `gd-sync adopt` rebuilds entries.
 
 ---
 
@@ -111,7 +111,7 @@ something to walk. Delete it and nothing breaks; `gd adopt` rebuilds entries.
                                     develop  ◀── you
 ```
 
-1. **`gd sync`** rsyncs the live server onto `main` and commits it as
+1. **`gd-sync sync`** rsyncs the live server onto `main` and commits it as
    `[server-sync] …`. It also runs nightly in GitHub Actions, so `main` stays
    honest even if nobody touches the repo for a year.
 
@@ -119,7 +119,7 @@ something to walk. Delete it and nothing breaks; `gd adopt` rebuilds entries.
    rsyncs `main` up. Commits tagged `[server-sync]` are skipped, so a sync can't
    trigger a pointless redeploy of what just came down.
 
-3. **`gd merge`** is the only sanctioned route into `main`: server first, then
+3. **`gd-sync merge`** is the only sanctioned route into `main`: server first, then
    your branch, then push. If the server changed under you, you get a normal Git
    conflict in your IDE instead of silently flattening someone's live edit.
 
@@ -162,16 +162,16 @@ between macOS and the Linux container.
 
 Astro deploys differently: the worker runs `npm ci && npm run build` and ships
 `dist/` into the web root. There's no sync-back, because for a static site the
-repo genuinely is the source — `gd sync` says so and does nothing.
+repo genuinely is the source — `gd-sync sync` says so and does nothing.
 
 ---
 
 ## GitHub secrets
 
-`gd secrets` sets `GD_SSH_KEY`, `GD_SSH_HOST`, `GD_SSH_USER`, `GD_SSH_PORT` on
-the repo. Run `gd key` first so the key is authorised on the server.
+`gd-sync secrets` sets `GD_SSH_KEY`, `GD_SSH_HOST`, `GD_SSH_USER`, `GD_SSH_PORT` on
+the repo. Run `gd-sync key` first so the key is authorised on the server.
 
-Without these the workers can't reach GoDaddy, and you fall back to `gd deploy`
+Without these the workers can't reach GoDaddy, and you fall back to `gd-sync deploy`
 from your Mac, which works fine.
 
 ---
@@ -180,7 +180,7 @@ from your Mac, which works fine.
 
 **No database push.** Overwriting a live WordPress database from a local copy
 destroys every order, comment and form entry submitted since you pulled.
-Content changes belong on the live site. `gd db` is one-directional on purpose.
+Content changes belong on the live site. `gd-sync db` is one-directional on purpose.
 
 **Uploads aren't tracked.** `wp-content/uploads` is excluded everywhere. It's
 large, it changes through the admin, and it isn't code.
@@ -193,6 +193,6 @@ Every deploy — worker or manual — tars the current server copy to
 `~/gd-backups/` on the server first. The worker keeps the last 20.
 
 ```bash
-gd shell
+gd-sync shell
 cd ~/public_html && tar xzf ~/gd-backups/deploy-20261022-143000.tar.gz
 ```

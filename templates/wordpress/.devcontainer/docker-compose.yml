@@ -45,7 +45,7 @@ services:
     volumes:
       - wp-core:/var/www/html
       # Your tracked code, bind-mounted straight from the repo — edit in the IDE,
-      # refresh the browser, no rebuild. Regenerate with: gd scaffold <site>
+      # refresh the browser, no rebuild. Regenerate with: gd-sync scaffold <site>
       # __TRACKED_MOUNTS__
     depends_on:
       db:
@@ -63,7 +63,7 @@ services:
       MARIADB_ROOT_PASSWORD: root
     volumes:
       - db-data:/var/lib/mysql
-      # anything gd drops in _db/ can be imported from inside the container
+      # anything gd-sync drops in _db/ can be imported from inside the container
       - ../_db:/dumps:cached
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]

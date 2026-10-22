@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Installs gd as a global command. Written for macOS; works on Linux too.
+# Installs gd-sync as a global command. Written for macOS; works on Linux too.
 #
 #   ./install.sh            install to ~/.local/bin (no sudo)
 #   ./install.sh --system   install to /usr/local/bin (asks for sudo)
 #
-# gd stays where you cloned it — only a symlink is installed, so `git pull`
+# gd-sync stays where you cloned it — only a symlink is installed, so `git pull`
 # here updates the command everywhere.
 
 set -euo pipefail
@@ -25,13 +25,13 @@ step "Checking what's here"
 case "$(uname -s)" in
   Darwin) OS=macos ;;
   Linux)  OS=linux ;;
-  *)      die "Unsupported OS: $(uname -s). gd targets macOS and Linux." ;;
+  *)      die "Unsupported OS: $(uname -s). gd-sync targets macOS and Linux." ;;
 esac
 ok "$OS"
 
-# macOS ships bash 3.2. gd is written to run on it, but say so plainly.
+# macOS ships bash 3.2. gd-sync is written to run on it, but say so plainly.
 if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
-  warn "bash ${BASH_VERSION} — gd supports this, but if you hit anything odd:  brew install bash"
+  warn "bash ${BASH_VERSION} — gd-sync supports this, but if you hit anything odd:  brew install bash"
 fi
 
 MISSING=""
@@ -59,18 +59,18 @@ for t in docker gh mysql; do
 done
 
 # ---------------------------------------------------------------- install ---
-step "Installing gd"
+step "Installing gd-sync"
 
-chmod +x "$SRC/gd"
+chmod +x "$SRC/gd-sync"
 chmod +x "$SRC"/templates/*/.devcontainer/post-create.sh 2>/dev/null || true
 
 mkdir -p "$TARGET_DIR" 2>/dev/null || sudo mkdir -p "$TARGET_DIR"
 if [ -w "$TARGET_DIR" ]; then
-  ln -sf "$SRC/gd" "$TARGET_DIR/gd"
+  ln -sf "$SRC/gd-sync" "$TARGET_DIR/gd-sync"
 else
-  sudo ln -sf "$SRC/gd" "$TARGET_DIR/gd"
+  sudo ln -sf "$SRC/gd-sync" "$TARGET_DIR/gd-sync"
 fi
-ok "$TARGET_DIR/gd -> $SRC/gd"
+ok "$TARGET_DIR/gd-sync -> $SRC/gd-sync"
 
 # ------------------------------------------------------------------ PATH ----
 if ! printf '%s' ":$PATH:" | grep -q ":$TARGET_DIR:"; then
@@ -78,30 +78,30 @@ if ! printf '%s' ":$PATH:" | grep -q ":$TARGET_DIR:"; then
   LINE="export PATH=\"$TARGET_DIR:\$PATH\""
   for rc in "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc"; do
     [ -f "$rc" ] || continue
-    grep -qF "$TARGET_DIR" "$rc" || printf '\n# added by gd install\n%s\n' "$LINE" >> "$rc"
+    grep -qF "$TARGET_DIR" "$rc" || printf '\n# added by gd-sync install\n%s\n' "$LINE" >> "$rc"
     ok "updated $(basename "$rc")"
   done
   warn "Open a new terminal, or run:  $LINE"
 fi
 
 # ---------------------------------------------------------------- config ----
-CFG="${XDG_CONFIG_HOME:-$HOME/.config}/gd/config"
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/gd-sync/config"
 if [ ! -f "$CFG" ]; then
   step "First-time setup"
-  "$SRC/gd" config --setup
+  "$SRC/gd-sync" config --setup
 else
   step "Existing settings kept"
-  "$SRC/gd" config
+  "$SRC/gd-sync" config
 fi
 
 cat <<EOF
 
 ${B}Done.${N}
 
-  gd new        set up a domain
-  gd list       what gd knows about
-  gd help       everything else
+  gd-sync new        set up a domain
+  gd-sync list       what gd-sync knows about
+  gd-sync help       everything else
 
-gd works like git: run it inside one of your site folders and it acts on that
+gd-sync works like git: run it inside one of your site folders and it acts on that
 site. Outside one, it'll tell you so.
 EOF
