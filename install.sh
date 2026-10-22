@@ -35,17 +35,17 @@ if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
 fi
 
 MISSING=""
-for t in git ssh rsync; do command -v "$t" >/dev/null || MISSING="$MISSING $t"; done
+for t in git ssh tar perl; do command -v "$t" >/dev/null || MISSING="$MISSING $t"; done
 if [ -n "$MISSING" ]; then
   if [ "$OS" = macos ]; then
     die "Missing:$MISSING
-  git and ssh come with Xcode command line tools:  xcode-select --install
-  rsync:  brew install rsync    (Apple's bundled rsync is ancient but usable)"
+  git comes with Xcode command line tools:  xcode-select --install
+  ssh, tar and perl are part of macOS itself"
   else
     die "Missing:$MISSING — install them with your package manager"
   fi
 fi
-ok "git, ssh, rsync"
+ok "git, ssh, tar, perl"
 
 for t in docker gh mysql; do
   if command -v "$t" >/dev/null; then ok "$t"

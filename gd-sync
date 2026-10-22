@@ -34,6 +34,8 @@ REGISTRY="${GD_SYNC_REGISTRY:-$GD_SYNC_HOME/repos}"
 STATE_DIR="${GD_SYNC_STATE:-$HOME/.local/state/gd-sync}"
 TPL="${GD_SYNC_TEMPLATES:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/templates}"
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+export COPYFILE_DISABLE=1  # keep macOS tar from adding ._ files to what it ships
+WORK_DIRS=()
 
 # ---------------------------------------------------------------- output ----
 if [ -t 1 ]; then
@@ -235,7 +237,6 @@ ssh_opts() {
 }
 # shellcheck disable=SC2046
 rsh() { ssh $(ssh_opts) "$SSH_TARGET" "$@"; }
-rsync_e() { printf '%s' "ssh $(ssh_opts)"; }
 
 default_excludes() {
   printf '%s\n' .git .github .devcontainer .gd-sync .gd-sync.local .gitignore \
@@ -243,12 +244,140 @@ default_excludes() {
     'wp-content/cache' 'wp-content/uploads'
   local x; for x in $exclude; do printf '%s\n' "$x"; done
 }
-rsync_args() {
-  local a=(-az --delete --no-perms --no-owner --no-group --omit-dir-times) e
-  while IFS= read -r e; do a+=(--exclude "$e"); done < <(default_excludes)
-  printf '%s\n' "${a[@]}"
+
+# ------------------------------------------------------------- transfer -----
+# No rsync. The server lists its files (path, size, mtime) with a small Perl
+# script — every cPanel server has Perl — and file contents travel as a single
+# tar stream over ssh. Text is tab-separated, one path per line; names with a
+# tab or newline in them are skipped with a warning.
+#
+# What the server held at the last sync is remembered per machine, in
+# .git/gd-sync/server as "path size mtime blob". A file is only fetched when
+# its size or mtime moved since then, or main no longer holds that blob.
+# Fetched files are hashed and compared with main, so a touched-but-identical
+# file never shows up as a change.
+
+# Two modes. Listing: "lister N path... exclude..." prints every file under the
+# N paths. Filtering: "lister --filter N path... exclude..." reads lines from
+# stdin and keeps those whose first field is under the paths and not excluded.
+# Excludes follow rsync: a pattern matches a whole name or a trailing run of
+# path components, and * and ? never cross a slash.
+lister_pl() { cat <<'PERL'
+use strict; use warnings; use File::Find;
+my $filter = @ARGV && $ARGV[0] eq '--filter' ? shift @ARGV : '';
+my $n = shift @ARGV; my @roots = splice @ARGV, 0, $n;
+my @ex = map { my $r = quotemeta; $r =~ s/\\\*/[^\/]*/g; $r =~ s/\\\?/[^\/]/g; qr{(?:^|/)$r$} } @ARGV;
+sub skip { my $p = shift; for my $r (@ex) { return 1 if $p =~ $r } 0 }
+sub under { my $p = shift; for my $r (@roots) { return 1 if $r eq '.' || $p eq $r || index($p, "$r/") == 0 } 0 }
+sub excluded { my @c = split m{/}, shift; for my $i (1 .. @c) { return 1 if skip(join '/', @c[0 .. $i - 1]) } 0 }
+if ($filter) {
+  while (my $l = <STDIN>) { my ($p) = split /\t/, $l; print $l if under($p) && !excluded($p) }
+  exit 0;
 }
-remote_is_dir() { rsh "test -d '$remote_root/$1'" 2>/dev/null; }
+sub emit {
+  (my $p = shift) =~ s{^\./}{};
+  if ($p =~ /[\t\n]/) { print STDERR "skipped, tab or newline in name: $p\n"; return }
+  my @s = lstat $p; print "$p\t$s[7]\t$s[9]\n";
+}
+for my $t (@roots) {
+  next if !-e $t || excluded($t);
+  if (-f $t && !-l $t) { emit($t); next }
+  next unless -d $t;
+  find({ no_chdir => 1, wanted => sub {
+    (my $p = $File::Find::name) =~ s{^\./}{};
+    if ($p ne '.' && skip($p)) { $File::Find::prune = 1; return }
+    emit($p) if -f $_ && !-l $_;
+  } }, $t);
+}
+PERL
+}
+lister_args() { # N, the tracked paths, then the excludes
+  local p n=0 a=(); for p in $1; do a+=("$p"); n=$((n + 1)); done
+  printf '%s\n' "$n" "${a[@]}"; default_excludes
+}
+
+state_dir() { printf '%s/gd-sync' "$(in_repo rev-parse --absolute-git-dir)"; }
+
+# Paths are lines; the server and tar want NUL-separated lists.
+nul() { tr '\n' '\0' < "$1"; }
+
+# What the server holds now, as "path size mtime", minus anything gitignored
+# that main doesn't already track.
+remote_manifest() { # remote_manifest <roots> <out>
+  local args=() a cmd
+  while IFS= read -r a; do args+=("$a"); done < <(lister_args "$1")
+  cmd="cd $(printf '%q' "$remote_root") && perl - $(printf '%q ' "${args[@]}")"
+  rsh "$cmd" < <(lister_pl) > "$2.raw" || die "Could not list the server's files"
+  cut -f1 "$2.raw" | in_repo check-ignore --stdin > "$2.ign" 2>/dev/null || true
+  awk -F'\t' 'FILENAME == ARGV[1] { ign[$0] = 1; next } !($1 in ign)' "$2.ign" "$2.raw" > "$2"
+}
+
+# main's files under the given roots, as "path blob", minus excluded ones.
+main_tree() { # main_tree <roots> <out>
+  local args=() a
+  while IFS= read -r a; do args+=("$a"); done < <(lister_args "$1")
+  in_repo ls-tree -r main | awk -F'\t' '{ split($1, m, " "); if (m[2] == "blob" && m[1] != "120000") print $2 "\t" m[3] }' \
+    | perl -e "$(lister_pl)" -- --filter "${args[@]}" > "$2"
+}
+
+# Compares the server with main. Leaves in $W:
+#   m  server manifest     t  main's tree       s  last known server state
+#   new      server files main lacks         changed  server files that differ
+#   gone     files main has, the server not  same     fetched, identical to main
+#   skipped  listed, but vanished before fetch
+# and the fetched files themselves under $W/files.
+compare_with_server() {
+  local sf; sf="$(state_dir)/server"
+  remote_manifest "$tracked" "$W/m"
+  main_tree "$tracked" "$W/t"
+  if [ -f "$sf" ]; then cp "$sf" "$W/s"; else : > "$W/s"; fi
+
+  awk -F'\t' -v cand="$W/cand" -v gone="$W/gone" '
+    FILENAME == ARGV[1] { s[$1] = $2 "\t" $3 "\t" $4; next }
+    FILENAME == ARGV[2] { t[$1] = $2; next }
+    { m[$1] = 1
+      if (!($1 in t) || !($1 in s) || s[$1] != $2 "\t" $3 "\t" t[$1]) print $1 > cand }
+    END { for (p in t) if (!(p in m)) print p > gone }' "$W/s" "$W/t" "$W/m"
+  touch "$W/cand" "$W/gone"; sort -o "$W/gone" "$W/gone"
+
+  mkdir -p "$W/files"
+  if [ -s "$W/cand" ]; then
+    info "fetching $(wc -l < "$W/cand" | tr -d ' ') file(s) whose size or date moved"
+    nul "$W/cand" | rsh "cd $(printf '%q' "$remote_root") && tar czf - --null -T -" \
+      | tar xzf - -C "$W/files" || warn "Some files could not be fetched — they are skipped"
+  fi
+
+  : > "$W/got"; : > "$W/skipped"
+  local p; while IFS= read -r p; do
+    if [ -f "$W/files/$p" ]; then printf '%s\n' "$p" >> "$W/got"; else printf '%s\n' "$p" >> "$W/skipped"; fi
+  done < "$W/cand"
+  ( cd "$W/files" && git hash-object --no-filters --stdin-paths < "$W/got" ) | paste "$W/got" - > "$W/hashed"
+
+  awk -F'\t' -v new="$W/new" -v changed="$W/changed" -v same="$W/same" '
+    FILENAME == ARGV[1] { t[$1] = $2; next }
+    !($1 in t) { print $1 > new; next }
+    t[$1] != $2 { print $1 > changed; next }
+    { print $1 > same }' "$W/t" "$W/hashed"
+  touch "$W/new" "$W/changed" "$W/same"
+}
+
+# Record what the server holds, for every listed path whose content we now
+# know matches the given tree. Paths in the third file are left out.
+save_server_state() { # save_server_state <tree> <leave-out>
+  mkdir -p "$(state_dir)"
+  awk -F'\t' '
+    FILENAME == ARGV[1] { t[$1] = $2; next }
+    FILENAME == ARGV[2] { out[$0] = 1; next }
+    ($1 in t) && !($1 in out) { print $1 "\t" $2 "\t" $3 "\t" t[$1] }' \
+    "$1" "$2" "$W/m" > "$(state_dir)/server"
+}
+
+work_dir() { # a scratch dir on the repo's disk, removed on exit
+  mkdir -p "$(state_dir)"
+  W="$(mktemp -d "$(state_dir)/tmp.XXXXXX")"
+  WORK_DIRS+=("$W")
+  trap 'rm -rf "${WORK_DIRS[@]}"' EXIT
+}
 
 # Keep the 3 newest dumps. (BSD xargs has no -r, so do it the portable way.)
 prune_dumps() {
@@ -259,7 +388,7 @@ prune_dumps() {
 }
 
 check_tools() {
-  local m="" t; for t in ssh rsync git; do command -v "$t" >/dev/null || m="$m $t"; done
+  local m="" t; for t in ssh git tar perl; do command -v "$t" >/dev/null || m="$m $t"; done
   [ -z "$m" ] || die "Missing required tools:$m"
 }
 ensure_remote_wpcli() {
@@ -547,16 +676,16 @@ cmd_sync() {
   step "Updating main with the current server contents"
   in_repo checkout -q main
 
-  local p src a args=()
-  while IFS= read -r a; do args+=("$a"); done < <(rsync_args)
-  for p in $tracked; do
-    if remote_is_dir "$p"; then src="$remote_root/$p/"; mkdir -p "$repo/$p"
-    else src="$remote_root/$p"; mkdir -p "$(dirname "$repo/$p")"; fi
-    info "$p"
-    rsync "${args[@]}" -e "$(rsync_e)" "$SSH_TARGET:$src" "$repo/$p" || die "rsync failed for $p"
-  done
+  work_dir
+  compare_with_server
+  cat "$W/new" "$W/changed" > "$W/put"
+  if [ -s "$W/put" ]; then
+    ( cd "$W/files" && tar cf - -T "$W/put" ) | ( cd "$repo" && tar xf - ) || die "Could not write the fetched files"
+    in_repo --literal-pathspecs add --pathspec-from-file="$W/put"
+  fi
+  [ -s "$W/gone" ] && in_repo --literal-pathspecs rm -q --pathspec-from-file="$W/gone"
+  [ -s "$W/skipped" ] && warn "$(wc -l < "$W/skipped" | tr -d ' ') file(s) vanished from the server mid-sync — run sync again"
 
-  in_repo add -A
   if in_repo diff --cached --quiet; then
     ok "main already matches the server"
   else
@@ -565,6 +694,8 @@ cmd_sync() {
     ok "main updated from the server"
     in_repo diff --stat HEAD~1 HEAD | sed 's/^/    /'
   fi
+  main_tree "$tracked" "$W/t2"
+  save_server_state "$W/t2" "$W/skipped"
 
   in_repo remote get-url origin >/dev/null 2>&1 && {
     in_repo push -q origin main 2>/dev/null && info "pushed main to origin" \
@@ -589,7 +720,7 @@ cmd_merge() {
   if ! in_repo merge --no-ff --no-edit "$from"; then
     warn "Conflict between your work and the live server."
     in_repo diff --name-only --diff-filter=U | sed 's/^/    /'
-    info "Resolve in your IDE, then: git merge --continue && gd-sync merge"
+    info "Resolve in your IDE, then: git merge --continue && gd-sync deploy"
     exit 1
   fi
   ok "merged"
@@ -610,68 +741,124 @@ cmd_status() {
   load_site "${1:-}"; check_tools
   [ "$type" = "astro" ] && { info "$site is static — compare by building locally."; return 0; }
   need_server
-  step "Server vs your working copy of $site (read-only)"
-  info "note: files only you have show as 'deleting' — that's your unmerged work"
-  local p src out a any=0 args=()
-  while IFS= read -r a; do args+=("$a"); done < <(rsync_args)
-  for p in $tracked; do
-    if remote_is_dir "$p"; then src="$remote_root/$p/"; else src="$remote_root/$p"; fi
-    out="$(rsync "${args[@]}" --dry-run --itemize-changes -e "$(rsync_e)" \
-          "$SSH_TARGET:$src" "$repo/$p" 2>/dev/null | grep -v '^$' || true)"
-    [ -n "$out" ] && { any=1; printf '  %s%s%s\n' "$B" "$p" "$N"; printf '%s\n' "$out" | sed 's/^/      /'; }
-  done
-  [ "$any" = "0" ] && ok "Identical" || info "Run 'gd-sync sync' to fold these into main"
+  step "Server vs main for $site (read-only)"
+  work_dir
+  compare_with_server
+  cat "$W/new" "$W/changed" "$W/skipped" > "$W/unsettled"
+  save_server_state "$W/t" "$W/unsettled"
+
+  local any=0
+  [ -s "$W/new" ]     && { any=1; sed "s/^/    ${G}+ /; s/\$/$N/" "$W/new"; }
+  [ -s "$W/changed" ] && { any=1; sed "s/^/    ${Y}~ /; s/\$/$N/" "$W/changed"; }
+  [ -s "$W/gone" ]    && { any=1; sed "s/^/    ${R}- /; s/\$/$N/" "$W/gone"; }
+  if [ "$any" = "0" ]; then ok "Identical"
+  else info "+ only on the server   ~ differs   - only in main"; info "Run 'gd-sync sync' to fold these into main"; fi
 }
 
 cmd_deploy() {
   load_site; check_tools; need_server
   local branch; branch="$(current_branch)"
-  [ "$branch" = "main" ] || warn "You are on '$branch'. main is what the server mirrors."
+  [ "$branch" = "main" ] || die "Deploy ships main, and you are on '$branch'.
+  Get your work into main first — 'gd-sync merge' does that safely."
+  [ -z "$(in_repo status --porcelain --untracked-files=no)" ] || die "main has uncommitted changes — commit or stash them first"
 
-  local p src dst out a any=0 args=()
-  while IFS= read -r a; do args+=("$a"); done < <(rsync_args)
+  work_dir
+  if [ -n "$publish_dir" ]; then deploy_build; else deploy_main; fi
+}
 
-  if [ -n "$publish_dir" ]; then
-    [ -d "$repo/$publish_dir" ] || die "No build output at $publish_dir — run the build first"
-    step "Deploying $site  [$publish_dir -> web root]"
-  else
-    step "Deploying $site  [$branch -> server]"
+# Ships what changed in main since the server was last seen, and refuses when
+# the server itself moved since then: main mirrors the server, never the other
+# way round.
+deploy_main() {
+  local sf; sf="$(state_dir)/server"
+  [ -f "$sf" ] || die "This machine has never synced $site, so it can't tell what the server holds.
+  Run 'gd-sync sync' first."
+  step "Deploying $site  [main -> server]"
+  remote_manifest "$tracked" "$W/m"
+  main_tree "$tracked" "$W/t"
+
+  awk -F'\t' -v up="$W/up" -v del="$W/del" -v drift="$W/drift" '
+    FILENAME == ARGV[1] { s[$1] = $2 "\t" $3; sb[$1] = $4; next }
+    FILENAME == ARGV[2] { m[$1] = $2 "\t" $3; next }
+    { t[$1] = 1
+      if (($1 in s) && sb[$1] == $2) next
+      print $1 > up
+      if (($1 in m) != ($1 in s) || (($1 in m) && m[$1] != s[$1])) print $1 > drift }
+    END { for (p in s) if (!(p in t) && (p in m)) {
+            print p > del; if (m[p] != s[p]) print p > drift } }' "$sf" "$W/m" "$W/t"
+  touch "$W/up" "$W/del" "$W/drift"; sort -o "$W/del" "$W/del"
+
+  if [ -s "$W/drift" ]; then
+    sed 's/^/    /' "$W/drift" >&2
+    die "The server changed these since your last sync. Deploying would overwrite that.
+  Run 'gd-sync merge' to fold the server's changes in and deploy in one go."
   fi
+  [ -s "$W/up" ] || [ -s "$W/del" ] || { ok "Server already matches main — nothing to deploy"; return 0; }
 
-  say ""; info "Dry run:"
-  if [ -n "$publish_dir" ]; then
-    out="$(rsync "${args[@]}" --dry-run --itemize-changes -e "$(rsync_e)" \
-          "$repo/$publish_dir/" "$SSH_TARGET:$remote_root/" 2>/dev/null | grep -v '^$' || true)"
-    [ -n "$out" ] && { any=1; printf '%s\n' "$out" | sed 's/^/      /'; }
-  else
-    for p in $tracked; do
-      [ -e "$repo/$p" ] || { warn "$p missing locally — skipped"; continue; }
-      if [ -d "$repo/$p" ]; then src="$repo/$p/"; dst="$remote_root/$p/"; else src="$repo/$p"; dst="$remote_root/$p"; fi
-      out="$(rsync "${args[@]}" --dry-run --itemize-changes -e "$(rsync_e)" \
-            "$src" "$SSH_TARGET:$dst" 2>/dev/null | grep -v '^$' || true)"
-      [ -n "$out" ] && { any=1; printf '  %s%s%s\n' "$B" "$p" "$N"; printf '%s\n' "$out" | sed 's/^/      /'; }
-    done
-  fi
-  [ "$any" = "0" ] && { ok "Server already matches — nothing to deploy"; return 0; }
-
+  say ""
+  awk -F'\t' -v G="$G" -v Y="$Y" -v N="$N" 'FILENAME == ARGV[1] { m[$1] = 1; next }
+    { print "    " (($1 in m) ? Y "~ " : G "+ ") $1 N }' "$W/m" "$W/up"
+  sed "s/^/    ${R}- /; s/\$/$N/" "$W/del"
   say ""; confirm "Push these to the LIVE site?" || { say "Cancelled."; return 0; }
 
+  backup_server
+  step "Uploading"
+  ship_files "$repo" "$W/up"
+  remove_remote "$W/del"
+
+  # The uploaded files now carry main's blobs, with whatever size and mtime
+  # the server gave them. Everything else keeps its last known state.
+  remote_manifest "$tracked" "$W/m2"
+  awk -F'\t' '
+    FILENAME == ARGV[1] { s[$1] = $2 "\t" $3; sb[$1] = $4; next }
+    FILENAME == ARGV[2] { up[$0] = 1; next }
+    FILENAME == ARGV[3] { split($0, a, "\t"); t[a[1]] = a[2]; next }
+    ($1 in up)                                { print $1 "\t" $2 "\t" $3 "\t" t[$1]; next }
+    ($1 in s) && s[$1] == $2 "\t" $3          { print $1 "\t" $2 "\t" $3 "\t" sb[$1] }' \
+    "$sf" "$W/up" "$W/t" "$W/m2" > "$W/s2" && mv "$W/s2" "$sf"
+  ok "Deployed"
+}
+
+# A static build isn't in git, so the whole build goes up each time. Files
+# from the previous deploy that the new build no longer has are removed;
+# anything else on the server is left alone.
+deploy_build() {
+  [ -d "$repo/$publish_dir" ] || die "No build output at $publish_dir — run the build first"
+  step "Deploying $site  [$publish_dir -> web root]"
+  local args=() a prev; prev="$(state_dir)/published"
+  while IFS= read -r a; do args+=("$a"); done < <(lister_args ".")
+  ( cd "$repo/$publish_dir" && perl -e "$(lister_pl)" -- "${args[@]}" ) | cut -f1 | sort > "$W/up"
+  [ -s "$W/up" ] || die "$publish_dir is empty — run the build first"
+  if [ -f "$prev" ]; then comm -23 "$prev" "$W/up" > "$W/del"; else : > "$W/del"; fi
+
+  say ""; info "$(wc -l < "$W/up" | tr -d ' ') file(s) to upload"
+  sed "s/^/    ${R}- /; s/\$/$N/" "$W/del"
+  say ""; confirm "Push these to the LIVE site?" || { say "Cancelled."; return 0; }
+
+  backup_server
+  step "Uploading"
+  ship_files "$repo/$publish_dir" "$W/up"
+  remove_remote "$W/del"
+  cp "$W/up" "$prev"
+  ok "Deployed"
+}
+
+backup_server() {
   step "Backing up the server's current files"
   local stamp; stamp="$(date +%Y%m%d-%H%M%S)"
   rsh "mkdir -p ~/gd-sync-backups && cd '$remote_root' && tar czf ~/gd-sync-backups/${site}-${stamp}.tar.gz ${tracked:-.} 2>/dev/null" \
     && ok "~/gd-sync-backups/${site}-${stamp}.tar.gz" || warn "Backup failed — continuing"
+}
 
-  step "Uploading"
-  if [ -n "$publish_dir" ]; then
-    rsync "${args[@]}" -e "$(rsync_e)" "$repo/$publish_dir/" "$SSH_TARGET:$remote_root/" || die "Upload failed"
-  else
-    for p in $tracked; do
-      [ -e "$repo/$p" ] || continue
-      if [ -d "$repo/$p" ]; then src="$repo/$p/"; dst="$remote_root/$p/"; else src="$repo/$p"; dst="$remote_root/$p"; fi
-      info "$p"; rsync "${args[@]}" -e "$(rsync_e)" "$src" "$SSH_TARGET:$dst" || die "Upload failed for $p"
-    done
-  fi
-  ok "Deployed"
+ship_files() { # ship_files <local dir> <list> — one tar stream into the web root
+  [ -s "$2" ] || return 0
+  ( cd "$1" && tar czf - -T "$2" ) \
+    | rsh "cd $(printf '%q' "$remote_root") && tar xzmf - --no-overwrite-dir" || die "Upload failed"
+}
+
+remove_remote() { # remove_remote <list>
+  [ -s "$1" ] || return 0
+  nul "$1" | rsh "cd $(printf '%q' "$remote_root") && xargs -0 rm -f --" || die "Removing files on the server failed"
 }
 
 cmd_db() {

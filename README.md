@@ -22,7 +22,8 @@ The installer checks your tools, symlinks `gd-sync` onto your PATH, adds the PAT
 line to `.zshrc` if needed, and runs first-time setup. It installs a symlink
 rather than a copy, so `git pull` in `~/gd-sync` updates the command everywhere.
 
-Required: `git`, `ssh`, `rsync` (Xcode command line tools cover the first two).
+Required: `git`, `ssh`, `tar`, `perl`. macOS has all but `git`, which comes with
+the Xcode command line tools. No rsync: see [How files move](#how-files-move).
 Optional: `docker` for devcontainers, `gh` for GitHub setup, `mysql-client`.
 
 macOS ships bash 3.2 and BSD userland; `gd-sync` is written for both, so Homebrew
@@ -78,7 +79,7 @@ gd-sync merge      # sync, merge develop, go live   ← the normal one
 gd-sync status     # what's drifted (read-only)
 gd-sync db         # live database -> _db/, imported into the container
 gd-sync up / down  # start / stop the devcontainer
-gd-sync deploy     # manual rsync, if you'd rather not involve GitHub
+gd-sync deploy     # ship main by hand, if you'd rather not involve GitHub
 gd-sync shell      # SSH in
 ```
 
@@ -111,7 +112,7 @@ something to walk. Delete it and nothing breaks; `gd-sync adopt` rebuilds entrie
                                     develop  ◀── you
 ```
 
-1. **`gd-sync sync`** rsyncs the live server onto `main` and commits it as
+1. **`gd-sync sync`** copies the live server onto `main` and commits it as
    `[server-sync] …`. It also runs nightly in GitHub Actions, so `main` stays
    honest even if nobody touches the repo for a year.
 
@@ -126,6 +127,24 @@ something to walk. Delete it and nothing breaks; `gd-sync adopt` rebuilds entrie
 The same rule is enforced on GitHub for pull requests. `verify-main.yml` runs
 the server sync, then fails the check if your branch doesn't contain the
 server's current state — so you can't merge a PR in the browser and bypass it.
+
+## How files move
+
+No rsync on your machine. The server lists its files with a short Perl script
+(every cPanel server has Perl), and files travel as one compressed `tar` stream
+over SSH.
+
+- **sync / status** fetch only files whose size or date changed since the last
+  sync, hash them, and compare with `main`, so a file that was touched but not
+  changed never shows up. What the server held is remembered per machine in
+  `.git/gd-sync/server`.
+- **deploy** ships exactly what changed in `main` since then, and removes what
+  `main` deleted. If any of those files changed on the server in the meantime,
+  it refuses and tells you to run `gd-sync merge`. It never deletes a file it
+  didn't know about.
+- On a machine that has never synced a site, run `gd-sync sync` before deploying.
+
+The GitHub workers still use rsync; Ubuntu runners have it.
 
 ---
 
