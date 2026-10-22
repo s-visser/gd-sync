@@ -11,23 +11,41 @@ folder you're standing in. Outside one, it says so.
 
 ---
 
-## Install (macOS)
+## Install
+
+gd-sync is a single program for Windows, macOS and Linux. Download the archive
+for your platform from the [releases page](https://github.com/s-visser/gd-sync/releases),
+unpack it and put `gd-sync` (`gd-sync.exe` on Windows) somewhere on your PATH.
+Or, with Go installed:
 
 ```bash
-git clone <this-repo> ~/gd-sync
-cd ~/gd-sync && ./install.sh
+go install github.com/s-visser/gd-sync/cmd/gd-sync@latest
 ```
 
-The installer checks your tools, symlinks `gd-sync` onto your PATH, adds the PATH
-line to `.zshrc` if needed, and runs first-time setup. It installs a symlink
-rather than a copy, so `git pull` in `~/gd-sync` updates the command everywhere.
+Then run the short first-time setup:
 
-Required: `git`, `ssh`, `tar`, `perl`. macOS has all but `git`, which comes with
-the Xcode command line tools. No rsync: see [How files move](#how-files-move).
-Optional: `docker` for devcontainers, `gh` for GitHub setup, `mysql-client`.
+```bash
+gd-sync config --setup
+```
 
-macOS ships bash 3.2 and BSD userland; `gd-sync` is written for both, so Homebrew
-bash is not required.
+Required: `git` ([Git for Windows](https://git-scm.com/download/win) on Windows).
+Optional: `docker` for devcontainers, `gh` for GitHub setup, and an `ssh` client
+for `gd-sync shell` (built into macOS, Linux and Windows 10+).
+
+SSH is built in: gd-sync uses your SSH agent or the keys in `~/.ssh`
+(`%USERPROFILE%\.ssh` on Windows), and asks for the cPanel password otherwise.
+No rsync, tar or Perl needed on your machine — see [How files move](#how-files-move).
+
+### Windows
+
+Site folders can live anywhere, `C:\Users\you\Sites` included, and every command
+works from PowerShell, cmd or Windows Terminal. gd-sync sets each site repo to
+keep the server's line endings exactly, so files never get converted to CRLF
+on the way through.
+
+Docker Desktop reaches folders on `C:\` more slowly than its own disk. The
+WordPress devcontainer only mounts your tracked paths, so this stays bearable;
+WordPress core lives in a Docker volume.
 
 ## Global settings
 
@@ -44,7 +62,7 @@ gd-sync config --setup                # walk through them again
 | `GIT_PRIVATE` | `true` / `false` for new repos |
 | `DEFAULT_TYPE` | `wordpress` or `astro` |
 
-Stored in `~/.config/gd-sync/config`. With these set, `gd-sync new` already knows the
+Stored in `~/.config/gd-sync/config` (`%AppData%\gd-sync\config` on Windows). With these set, `gd-sync new` already knows the
 folder and the GitHub repo name, so you just press enter.
 
 ---
@@ -61,7 +79,7 @@ the devcontainer and the three workflows, tests SSH, offers to install your SSH
 key, pulls the live files onto `main`, offers to pull the database, branches
 `develop`, creates the GitHub repo and sets the deploy secrets.
 
-Already have a folder with a `.gd-sync` in it — a clone on another Mac, say?
+Already have a folder with a `.gd-sync` in it — a clone on another computer, say?
 
 ```bash
 gd-sync adopt
@@ -130,15 +148,16 @@ server's current state — so you can't merge a PR in the browser and bypass it.
 
 ## How files move
 
-No rsync on your machine. The server lists its files with a short Perl script
-(every cPanel server has Perl), and files travel as one compressed `tar` stream
-over SSH.
+No rsync. The server lists its files with a short Perl script (every cPanel
+server has Perl), and files travel as one compressed `tar` stream over a single
+SSH connection.
 
 - **sync / status** fetch only files whose size or date changed since the last
   sync, hash them, and compare with `main`, so a file that was touched but not
   changed never shows up. What the server held is remembered per machine in
   `.git/gd-sync/server`.
-- **deploy** ships exactly what changed in `main` since then, and removes what
+- **deploy** ships exactly what changed in `main` since then, straight from git
+  (so the working tree can't leak into it), and removes what
   `main` deleted. If any of those files changed on the server in the meantime,
   it refuses and tells you to run `gd-sync merge`. It never deletes a file it
   didn't know about.
@@ -192,7 +211,7 @@ and `GD_SYNC_SSH_PORT` on the repo. Run `gd-sync key` first so the key is
 authorised on the server.
 
 Without these the workers can't reach GoDaddy, and you fall back to `gd-sync deploy`
-from your Mac, which works fine.
+from your computer, which works fine.
 
 ---
 

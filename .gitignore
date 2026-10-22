@@ -2,3 +2,9 @@
 *.bak
 *.tmp
 .idea
+
+# build output
+/gd-sync
+/gd-sync.exe
+/gd-sync-ci
+/dist/

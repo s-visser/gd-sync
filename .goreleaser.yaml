@@ -1,0 +1,23 @@
+version: 2
+
+builds:
+  - main: ./cmd/gd-sync
+    binary: gd-sync
+    env: [CGO_ENABLED=0]
+    goos: [windows, darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/s-visser/gd-sync/internal/app.Version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [README.md]
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
