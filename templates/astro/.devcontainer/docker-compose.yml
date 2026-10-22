@@ -1,4 +1,4 @@
-name: ${COMPOSE_PROJECT_NAME:-gdastro}
+name: ${COMPOSE_PROJECT_NAME:-gd-sync-astro}
 
 services:
   workspace:

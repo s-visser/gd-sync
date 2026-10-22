@@ -33,22 +33,22 @@ jobs:
           fetch-depth: 0
 
       - name: Load site manifest
-        run: cat .gdsync >> "$GITHUB_ENV"
+        run: cat .gd-sync >> "$GITHUB_ENV"
 
       - name: Authorise SSH
         env:
-          SSH_KEY: ${{ secrets.GD_SSH_KEY }}
-          SSH_HOST: ${{ secrets.GD_SSH_HOST }}
+          SSH_KEY: ${{ secrets.GD_SYNC_SSH_KEY }}
+          SSH_HOST: ${{ secrets.GD_SYNC_SSH_HOST }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${{ secrets.GD_SSH_PORT || 22 }}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -p "${{ secrets.GD_SYNC_SSH_PORT || 22 }}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Download tracked paths from the server
         env:
-          T: ${{ secrets.GD_SSH_USER }}@${{ secrets.GD_SSH_HOST }}
-          P: ${{ secrets.GD_SSH_PORT || 22 }}
+          T: ${{ secrets.GD_SYNC_SSH_USER }}@${{ secrets.GD_SYNC_SSH_HOST }}
+          P: ${{ secrets.GD_SYNC_SSH_PORT || 22 }}
         run: |
           set -eu
           RSH="ssh -p $P -o StrictHostKeyChecking=accept-new"

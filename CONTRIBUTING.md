@@ -18,12 +18,12 @@ No reinstall needed.
 Point gd-sync at a throwaway config and a throwaway registry while testing:
 
 ```bash
-export GD_HOME=/tmp/gd-sync-test
+export GD_SYNC_HOME=/tmp/gd-sync-test
 gd-sync config --setup
 gd-sync new
 ```
 
-`GD_TEMPLATES` overrides the template folder, `GD_STATE` the SSH control-socket
+`GD_SYNC_TEMPLATES` overrides the template folder, `GD_SYNC_STATE` the SSH control-socket
 directory.
 
 ## Constraints worth keeping
@@ -44,7 +44,7 @@ directory.
 scaffolding. `gd-sync scaffold` re-runs all of them in an existing site, so changes
 roll out to sites that already exist.
 
-`write_docs` regenerates `GD.md` but never overwrites a site's own `README.md`.
+`write_docs` regenerates `GD-SYNC.md` but never overwrites a site's own `README.md`.
 
 ## Checks before committing
 
@@ -53,5 +53,5 @@ bash -n gd-sync && bash -n install.sh
 ```
 
 There are no automated tests. The flows worth exercising by hand against a real
-site: `gd-sync new`, `gd-sync sync` with server-side drift, `gd-sync merge` with a conflict,
-and `gd-sync adopt` on a fresh clone.
+site: `gd-sync new`, `gd-sync sync` with server-side drift, `gd-sync merge` with a
+conflict, and `gd-sync adopt` on a fresh clone.

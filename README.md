@@ -60,7 +60,7 @@ the devcontainer and the three workflows, tests SSH, offers to install your SSH
 key, pulls the live files onto `main`, offers to pull the database, branches
 `develop`, creates the GitHub repo and sets the deploy secrets.
 
-Already have a folder with a `.gdsync` in it — a clone on another Mac, say?
+Already have a folder with a `.gd-sync` in it — a clone on another Mac, say?
 
 ```bash
 gd-sync adopt
@@ -93,8 +93,8 @@ There is no central site list. Each repo carries its own:
 
 | file | committed? | holds |
 |---|---|---|
-| `.gdsync` | yes | what the site is and where it deploys — also read by the GitHub workers |
-| `.gdsync.local` | no | SSH host, user and port for this machine |
+| `.gd-sync` | yes | what the site is and where it deploys — also read by the GitHub workers |
+| `.gd-sync.local` | no | SSH host, user and port for this machine |
 
 `~/.config/gd-sync/repos` is only a list of folders, so `gd-sync list` and `--all` have
 something to walk. Delete it and nothing breaks; `gd-sync adopt` rebuilds entries.
@@ -168,8 +168,9 @@ repo genuinely is the source — `gd-sync sync` says so and does nothing.
 
 ## GitHub secrets
 
-`gd-sync secrets` sets `GD_SSH_KEY`, `GD_SSH_HOST`, `GD_SSH_USER`, `GD_SSH_PORT` on
-the repo. Run `gd-sync key` first so the key is authorised on the server.
+`gd-sync secrets` sets `GD_SYNC_SSH_KEY`, `GD_SYNC_SSH_HOST`, `GD_SYNC_SSH_USER`
+and `GD_SYNC_SSH_PORT` on the repo. Run `gd-sync key` first so the key is
+authorised on the server.
 
 Without these the workers can't reach GoDaddy, and you fall back to `gd-sync deploy`
 from your Mac, which works fine.
@@ -190,9 +191,9 @@ large, it changes through the admin, and it isn't code.
 ## Backups
 
 Every deploy — worker or manual — tars the current server copy to
-`~/gd-backups/` on the server first. The worker keeps the last 20.
+`~/gd-sync-backups/` on the server first. The worker keeps the last 20.
 
 ```bash
 gd-sync shell
-cd ~/public_html && tar xzf ~/gd-backups/deploy-20261022-143000.tar.gz
+cd ~/public_html && tar xzf ~/gd-sync-backups/deploy-20261022-143000.tar.gz
 ```

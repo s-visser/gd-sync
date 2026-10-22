@@ -1,4 +1,4 @@
-name: ${COMPOSE_PROJECT_NAME:-gdsite}
+name: ${COMPOSE_PROJECT_NAME:-gd-sync-site}
 
 services:
   # The container JetBrains / VS Code attaches to. Has wp-cli, php, node, rsync.
