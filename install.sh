@@ -102,6 +102,5 @@ ${B}Done.${N}
   gd-sync list       what gd-sync knows about
   gd-sync help       everything else
 
-gd-sync works like git: run it inside one of your site folders and it acts on that
-site. Outside one, it'll tell you so.
+gd-sync detects when you are currently in a gd-sync project and will execute it's commands for that site.
 EOF
