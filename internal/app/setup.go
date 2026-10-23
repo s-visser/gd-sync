@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -82,13 +81,21 @@ func cmdConfig(g *config.Global, args []string) error {
 func cmdList() error {
 	fmt.Printf("%sSites%s\n\n", ui.B, ui.N)
 	paths := config.RegistryList()
-	for _, p := range paths {
-		s, err := site.Load(p)
-		if err != nil {
+	sites := make([]*site.Site, len(paths))
+	width := 16
+	for i, p := range paths {
+		if s, err := site.Load(p); err == nil {
+			sites[i], width = s, max(width, len(s.Name))
+		}
+	}
+	for i, p := range paths {
+		s := sites[i]
+		if s == nil {
 			fmt.Printf("  %s%s%s %s(unreadable)%s\n", ui.B, p, ui.N, ui.R, ui.N)
 			continue
 		}
-		fmt.Printf("  %s%-16s%s %-10s %s\n     %s%s%s\n", ui.B, s.Name, ui.N, s.Type, s.LiveURL, ui.DIM, p, ui.N)
+		fmt.Printf("  %s%-*s%s  %-10s %s\n", ui.B, width, s.Name, ui.N, s.Type, s.LiveURL)
+		fmt.Printf("  %-*s  %-10s %s\n     %s%s%s\n", width, "", "", s.LocalURL, ui.DIM, p, ui.N)
 	}
 	if len(paths) == 0 {
 		ui.Info("none yet — run: gd-sync new")
@@ -211,8 +218,16 @@ func cmdNew(g *config.Global) error {
 		ui.Info("Leave empty to start with none — add them to tracked in %s later.", site.File)
 		s.Tracked = strings.Fields(ui.Ask("Maintained paths:", ""))
 	}
-	freePorts(s)
-	ui.Info("The local site will run at %s (port in %s)", s.LocalURL, site.File)
+	fmt.Fprintln(os.Stderr)
+	ui.Info("The port the local site runs on. Every site needs its own to run at the same time;")
+	ui.Info("the default is the first one no other site uses.")
+	askPort(s)
+	switch stype {
+	case "wordpress":
+		ui.Info("Local site %s, database on %d, mail on %d (ports in %s)", s.LocalURL, s.DBPort, s.MailPort, site.File)
+	case "astro":
+		ui.Info("Local site %s, preview on %d (ports in %s)", s.LocalURL, s.PreviewPort, site.File)
+	}
 
 	// ---- build it -----------------------------------------------------------
 	// Nothing is committed or pushed: the folder is yours to review first.
@@ -295,32 +310,75 @@ func cmdNew(g *config.Global) error {
 	return nil
 }
 
-// freePorts gives a new site the first ports, counting up from its type's
-// defaults, that no other site uses and nothing on this computer listens on,
-// so it runs next to the others.
-func freePorts(s *site.Site) {
-	taken := map[int]bool{}
+// askPort asks which port the new site runs on, offering the first free one.
+// The ports that follow it — database, mail, preview — must be free too.
+func askPort(s *site.Site) {
+	use := portUse()
+	freePorts(s, use)
+	safe := s.Port
+	for {
+		a := ui.Ask("Local port for the website:", strconv.Itoa(safe))
+		p, err := strconv.Atoi(a)
+		if err != nil || p < 1 || p > 65535 {
+			ui.Warn("%q is not a port number", a)
+			continue
+		}
+		s.Port, s.DBPort, s.MailPort, s.PreviewPort = p, 0, 0, 0
+		s.Defaults()
+		if p == safe {
+			return
+		}
+		if q, why := clash(s, use); q != 0 {
+			ui.Warn("Port %d won't work — %s. Press enter for %d.", q, why, safe)
+			continue
+		}
+		return
+	}
+}
+
+// portUse says why a new site can't have a port — another site has it, or
+// something on this computer listens on it — or "" when it's free.
+func portUse() func(int) string {
+	owner := map[int]string{}
 	for _, repo := range config.RegistryList() {
 		if other, err := site.Load(repo); err == nil {
 			for _, p := range other.Ports() {
-				taken[p] = true
+				owner[p] = other.Name
 			}
 		}
 	}
-	free := func(p int) bool {
-		if taken[p] {
-			return false
+	return func(p int) string {
+		if p < 1 || p > 65535 {
+			return "it is not a port number"
+		}
+		if o := owner[p]; o != "" {
+			return o + " uses it"
 		}
 		l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
 		if err != nil {
-			return false
+			return "something on this computer listens on it"
 		}
 		l.Close()
-		return true
+		return ""
 	}
+}
+
+// clash is the first of a site's ports that use rules out, and why.
+func clash(s *site.Site, use func(int) string) (int, string) {
+	for _, p := range s.Ports() {
+		if why := use(p); why != "" {
+			return p, why
+		}
+	}
+	return 0, ""
+}
+
+// freePorts gives a new site the first ports, counting up from its type's
+// defaults, that use doesn't rule out, so it runs next to the others.
+func freePorts(s *site.Site, use func(int) string) {
 	s.Defaults()
 	for try := 0; try < 100; try++ {
-		if !slices.ContainsFunc(s.Ports(), func(p int) bool { return !free(p) }) {
+		if p, _ := clash(s, use); p == 0 {
 			return
 		}
 		s.Port, s.DBPort, s.MailPort, s.PreviewPort = s.Port+1, 0, 0, 0

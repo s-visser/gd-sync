@@ -589,8 +589,8 @@ func TestNewWithGlobalDefaults(t *testing.T) {
 	w.write(w.server, "wp-content/themes/t/style.css", "x")
 
 	// domain, then enter for name, folder, repo, type, host, user, port;
-	// the web root; enter for the maintained paths.
-	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n\n" + w.server + "\n\n"))
+	// the web root; enter for the maintained paths and the local port.
+	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n\n" + w.server + "\n\n\n"))
 	t.Cleanup(func() { ui.SetInput(os.Stdin) })
 	if err := run([]string{"new"}); err != nil {
 		t.Fatal(err)
@@ -645,7 +645,7 @@ func TestNewLeavesTheFirstCommitToYou(t *testing.T) {
 	w.write(w.server, "wp-content/themes/t/style.css", "body{}\n")
 	w.write(w.server, "wp-content/plugins/other/other.php", "<?php\n")
 
-	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n\n" + w.server + "\nwp-content/themes/t\n\n"))
+	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n\n" + w.server + "\nwp-content/themes/t\n\n\n"))
 	t.Cleanup(func() { ui.SetInput(os.Stdin) })
 	if err := run([]string{"new"}); err != nil {
 		t.Fatal(err)
@@ -691,7 +691,7 @@ func TestNewLeavesTheFirstCommitToYou(t *testing.T) {
 func TestFreePorts(t *testing.T) {
 	t.Setenv("GD_SYNC_REGISTRY", filepath.Join(t.TempDir(), "repos"))
 	first := &site.Site{Repo: t.TempDir(), Name: "first", Type: "wordpress"}
-	freePorts(first)
+	freePorts(first, portUse())
 	if err := first.Write(); err != nil {
 		t.Fatal(err)
 	}
@@ -699,7 +699,7 @@ func TestFreePorts(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := &site.Site{Repo: t.TempDir(), Name: "second", Type: "wordpress"}
-	freePorts(second)
+	freePorts(second, portUse())
 	for _, p := range second.Ports() {
 		if slices.Contains(first.Ports(), p) {
 			t.Errorf("second site %v shares a port with the first %v", second.Ports(), first.Ports())
@@ -707,5 +707,33 @@ func TestFreePorts(t *testing.T) {
 	}
 	if second.LocalURL != fmt.Sprintf("http://localhost:%d", second.Port) {
 		t.Errorf("local_url %s doesn't follow port %d", second.LocalURL, second.Port)
+	}
+}
+
+// The wizard offers a free port, and asks again for one another site has.
+func TestAskPort(t *testing.T) {
+	t.Setenv("GD_SYNC_REGISTRY", filepath.Join(t.TempDir(), "repos"))
+	first := &site.Site{Repo: t.TempDir(), Name: "first", Type: "wordpress"}
+	freePorts(first, portUse())
+	if err := first.Write(); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.RegistryAdd(first.Repo); err != nil {
+		t.Fatal(err)
+	}
+
+	second := &site.Site{Repo: t.TempDir(), Name: "second", Type: "wordpress"}
+	ui.SetInput(strings.NewReader(fmt.Sprintf("nope\n%d\n\n", first.Port)))
+	t.Cleanup(func() { ui.SetInput(os.Stdin) })
+	askPort(second)
+	if second.Port == first.Port || second.Port == 0 {
+		t.Errorf("took port %d, the first site has %d", second.Port, first.Port)
+	}
+
+	third := &site.Site{Repo: t.TempDir(), Name: "third", Type: "wordpress"}
+	ui.SetInput(strings.NewReader("18555\n"))
+	askPort(third)
+	if third.Port != 18555 || third.LocalURL != "http://localhost:18555" || third.DBPort != 13306+18555-8080 {
+		t.Errorf("typed port not used: %+v", third)
 	}
 }
