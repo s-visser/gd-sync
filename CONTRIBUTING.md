@@ -10,7 +10,7 @@ internal/transfer/      moving files without rsync: lister, compare, tar streams
 internal/remote/        the SSH connection, auth and known_hosts
 internal/remote/sshtest an in-process SSH server for tests
 internal/gitx/          runs the real git binary
-internal/site/          a site's .gd-sync / .gd-sync.local
+internal/site/          a site's .gd-sync.toml / .gd-sync.local.toml
 internal/config/        machine-wide settings and the site registry
 internal/scaffold/      everything written into a new site, templates included
 internal/ui/            output and prompts

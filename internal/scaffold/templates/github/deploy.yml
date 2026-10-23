@@ -28,7 +28,13 @@ jobs:
           fetch-depth: 0
 
       - name: Load site manifest
-        run: grep -E '^[A-Z_]+=' .gd-sync >> "$GITHUB_ENV"
+        run: |
+          python3 - >> "$GITHUB_ENV" <<'EOF'
+          import tomllib
+          site = tomllib.load(open(".gd-sync.toml", "rb"))
+          for key in ("build_cmd", "remote_root"):
+              print(f"{key.upper()}={site.get(key, '')}")
+          EOF
 
       - name: Set up Node
         if: env.BUILD_CMD != ''
@@ -68,7 +74,7 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf 'SSH_HOST=%s\nSSH_USER=%s\nSSH_PORT=%s\n' "$SSH_HOST" "$SSH_USER" "${SSH_PORT:-22}" > .gd-sync.local
+          printf 'ssh_host = "%s"\nssh_user = "%s"\nssh_port = %s\n' "$SSH_HOST" "$SSH_USER" "${SSH_PORT:-22}" > .gd-sync.local.toml
 
       - name: Deploy
         run: gd-sync deploy -y

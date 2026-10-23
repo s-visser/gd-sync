@@ -26,7 +26,7 @@ const usage = `gd-sync — GoDaddy cPanel site toolkit. The server is the source
 
 Every site is its own folder, its own Git repo, its own config. Run gd-sync from
 anywhere inside a site's folder and it works out which site you mean by
-reading that repo's own .gd-sync file. No site name to remember or type.
+reading that repo's own .gd-sync.toml file. No site name to remember or type.
 
   gd-sync new             create a new site: folder, repo, config, container
   gd-sync adopt           register a folder you already have

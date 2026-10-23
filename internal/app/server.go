@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/s-visser/gd-sync/internal/remote"
+	"github.com/s-visser/gd-sync/internal/site"
 	"github.com/s-visser/gd-sync/internal/ui"
 )
 
@@ -117,7 +118,7 @@ func cmdUp(c *ctx) error {
 		v := c.s.PHPVersion
 		if v == "" {
 			v = defaultPHP
-			ui.Warn("No PHP_VERSION in .gd-sync — using PHP %s. Match the live site with: gd-sync php", v)
+			ui.Warn("No php_version in %s — using PHP %s. Match the live site with: gd-sync php", site.File, v)
 		}
 		ui.Info("PHP %s", v)
 		warnUnsupportedPHP(v)

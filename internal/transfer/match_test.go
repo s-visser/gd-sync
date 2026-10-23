@@ -59,7 +59,7 @@ func TestMatcherDotRoot(t *testing.T) {
 	if !m.Keep("index.html") || !m.Keep("blog/a.html") {
 		t.Error("everything should be under root .")
 	}
-	if m.Keep(".gd-sync") || m.Keep(".git/config") {
+	if m.Keep(".gd-sync.toml") || m.Keep(".git/config") {
 		t.Error("gd-sync's own files must never be transferred")
 	}
 }
@@ -74,7 +74,7 @@ func TestListerAgreesWithMatcher(t *testing.T) {
 		"wp-content/plugins/a/a.php", "wp-content/plugins/a/x.bak", "wp-content/plugins/a/node_modules/m.js",
 		"wp-content/uploads/x.jpg", "wp-content/debug.log", "wp-content/themes/t/my file.txt",
 		"wp-content/themes/old/s.css", "wp-content/themes/older/s.css", "wp-config.php", "robots.txt",
-		"README.md", "wp-content/plugins/a/README.md", "error_log", "wp-admin/error_log", ".gd-sync",
+		"README.md", "wp-content/plugins/a/README.md", "error_log", "wp-admin/error_log", ".gd-sync.toml",
 		".devcontainer/x", "wp-content/plugins/a/.devcontainer/y", "wp-content/cache/c.html",
 	}
 	for _, f := range files {

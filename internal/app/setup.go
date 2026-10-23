@@ -28,27 +28,35 @@ func cmdConfig(g *config.Global, args []string) error {
 			fmt.Printf("  %-14s %s\n", k, v)
 		}
 		ui.Say("")
-		ui.Info("change one:  gd-sync config PROJECTS_DIR ~/Sites")
+		ui.Info("change one:  gd-sync config projects_dir ~/Sites")
 		ui.Info("or run the short setup again:  gd-sync config --setup")
 		return nil
 	case args[0] == "--setup" || args[0] == "setup":
 		ui.Step("gd-sync setup")
-		g.Set("PROJECTS_DIR", ui.Ask("Where should new site folders go?", g.ProjectsDir))
-		g.Set("GIT_OWNER", ui.Ask("GitHub owner for new repos (user or org):", g.GitOwner))
-		g.Set("GIT_PRIVATE", ui.Ask("Make new repos private? (true/false):", g.GitPrivate))
-		g.Set("DEFAULT_TYPE", ui.Ask("Default site type (wordpress/astro):", g.DefaultType))
+		g.Set("projects_dir", ui.Ask("Where should new site folders go?", g.ProjectsDir))
+		g.Set("git_owner", ui.Ask("GitHub owner for new repos (user or org):", g.GitOwner))
+		for {
+			err := g.Set("git_private", ui.Ask("Make new repos private? (true/false):", g.GitPrivate))
+			if err == nil {
+				break
+			}
+			ui.Warn("%v", err)
+		}
+		g.Set("default_type", ui.Ask("Default site type (wordpress/astro):", g.DefaultType))
 		if err := g.Save(); err != nil {
 			return err
 		}
 		ui.OK("Saved to %s", g.Path)
 		return nil
 	}
-	k := strings.ToUpper(args[0])
+	k := args[0]
 	if len(args) < 2 || args[1] == "" {
 		return fmt.Errorf("usage: gd-sync config %s <value>", k)
 	}
-	if !g.Set(k, args[1]) {
+	if err := g.Set(k, args[1]); errors.Is(err, config.ErrUnknownKey) {
 		return fmt.Errorf("Unknown setting '%s' — try: gd-sync config", k)
+	} else if err != nil {
+		return fmt.Errorf("%s: %w", k, err)
 	}
 	if err := g.Save(); err != nil {
 		return err
@@ -83,7 +91,7 @@ func cmdScaffold(c *ctx) error {
 		return err
 	}
 	ui.OK("Scaffolding refreshed for %s", c.s.Name)
-	ui.Info("GD-SYNC.md, devcontainer, .github/workflows, .run, .gd-sync, .gitignore, .gitattributes")
+	ui.Info("GD-SYNC.md, devcontainer, .github/workflows, .run, %s, .gitignore, .gitattributes", site.File)
 	if out, _ := c.git.Output("ls-files", "--others", "--exclude-standard", "--directory"); strings.TrimSpace(out) != "" {
 		ui.Info("Not in git yet — newly maintained paths show up here. Commit them on develop:")
 		ui.List("", "", strings.Fields(out))
@@ -92,7 +100,7 @@ func cmdScaffold(c *ctx) error {
 	return nil
 }
 
-// cmdAdopt registers a folder that already has a .gd-sync: a clone on a new
+// cmdAdopt registers a folder that already has a .gd-sync.toml: a clone on a new
 // machine, or a site set up by a colleague.
 func cmdAdopt(dir string) error {
 	abs, err := filepath.Abs(dir)
@@ -104,7 +112,7 @@ func cmdAdopt(dir string) error {
 	}
 	repo, err := site.Find(abs)
 	if err != nil {
-		return fmt.Errorf("%s has no .gd-sync — set a site up with: gd-sync new", abs)
+		return fmt.Errorf("%s has no %s — set a site up with: gd-sync new", abs, site.File)
 	}
 	s, err := site.Load(repo)
 	if err != nil {
@@ -120,7 +128,7 @@ func cmdAdopt(dir string) error {
 		if err := s.Write(); err != nil {
 			return err
 		}
-		ui.OK("wrote %s", filepath.Join(repo, ".gd-sync.local"))
+		ui.OK("wrote %s", filepath.Join(repo, site.LocalFile))
 	}
 	if err := config.RegistryAdd(repo); err != nil {
 		return err
@@ -178,7 +186,7 @@ func cmdNew(g *config.Global) error {
 		ui.Info("Which paths do YOU maintain? Space separated, relative to the web root,")
 		ui.Info("e.g. wp-content/plugins/%s-custom. Only these go into git; the rest of", strings.SplitN(name, ".", 2)[0])
 		ui.Info("the site is downloaded too, so it runs locally, but git ignores it.")
-		ui.Info("Leave empty to start with none — add them to TRACKED in .gd-sync later.")
+		ui.Info("Leave empty to start with none — add them to tracked in %s later.", site.File)
 		s.Tracked = strings.Fields(ui.Ask("Maintained paths:", ""))
 	}
 	s.Defaults()
@@ -224,12 +232,12 @@ func cmdNew(g *config.Global) error {
 		return fmt.Errorf(`%v
   Enable it: GoDaddy dashboard -> Settings tab -> SSH access -> Manage -> toggle on.
   Your cPanel password is the SSH password.
-  Everything else is written — correct %s, then run: gd-sync sync`, err, filepath.Join(dir, ".gd-sync.local"))
+  Everything else is written — correct %s, then run: gd-sync sync`, err, filepath.Join(dir, site.LocalFile))
 	}
 	ui.OK("SSH works")
 	if conn.Run("test -d "+remote.Quote(s.RemoteRoot), nil, nil) != nil {
 		return fmt.Errorf(`Remote path not found: %s
-  Fix REMOTE_ROOT in %s, then run: gd-sync sync`, s.RemoteRoot, filepath.Join(dir, ".gd-sync"))
+  Fix remote_root in %s, then run: gd-sync sync`, s.RemoteRoot, filepath.Join(dir, site.File))
 	}
 
 	if stype == "wordpress" {
@@ -328,7 +336,7 @@ func siteName(s string) string {
 // emptyOrMissing refuses a folder that already has something in it, the way
 // git clone does.
 func emptyOrMissing(dir string) error {
-	if fileExists(filepath.Join(dir, ".gd-sync")) {
+	if site.Is(dir) {
 		return fmt.Errorf("%s is already a gd-sync site — use 'gd-sync adopt' there instead", dir)
 	}
 	entries, err := os.ReadDir(dir)

@@ -6,15 +6,16 @@
 package config
 
 import (
-	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 )
 
-// Global is the machine-wide settings file.
+// Global is the machine-wide settings file, config.toml.
 type Global struct {
 	ProjectsDir string // where new site folders are created
 	GitOwner    string // GitHub user or org that new repos belong to
@@ -24,7 +25,15 @@ type Global struct {
 }
 
 // Keys lists the settings in the order they are shown and saved.
-var Keys = []string{"PROJECTS_DIR", "GIT_OWNER", "GIT_PRIVATE", "DEFAULT_TYPE"}
+var Keys = []string{"projects_dir", "git_owner", "git_private", "default_type"}
+
+// globalFile is config.toml as written on disk.
+type globalFile struct {
+	ProjectsDir *string `toml:"projects_dir"`
+	GitOwner    *string `toml:"git_owner"`
+	GitPrivate  *bool   `toml:"git_private"`
+	DefaultType *string `toml:"default_type"`
+}
 
 // Home is the folder holding the settings and the registry:
 // $GD_SYNC_HOME, else $XDG_CONFIG_HOME/gd-sync, else ~/.config/gd-sync
@@ -73,14 +82,19 @@ func Load() (*Global, error) {
 		Path:        os.Getenv("GD_SYNC_CONFIG"),
 	}
 	if g.Path == "" {
-		g.Path = filepath.Join(Home(), "config")
+		g.Path = filepath.Join(Home(), "config.toml")
 	}
-	kv, err := ReadKeyValues(g.Path)
-	if err != nil {
+	var f globalFile
+	if err := ReadTOML(g.Path, &f); err != nil {
 		return nil, err
 	}
-	for k, v := range kv {
-		g.Set(k, v)
+	for k, v := range map[string]*string{"projects_dir": f.ProjectsDir, "git_owner": f.GitOwner, "default_type": f.DefaultType} {
+		if v != nil {
+			g.Set(k, *v)
+		}
+	}
+	if f.GitPrivate != nil {
+		g.GitPrivate = strconv.FormatBool(*f.GitPrivate)
 	}
 	return g, nil
 }
@@ -88,72 +102,64 @@ func Load() (*Global, error) {
 // Get returns a setting by key, or ok=false for an unknown key.
 func (g *Global) Get(key string) (string, bool) {
 	switch key {
-	case "PROJECTS_DIR":
+	case "projects_dir":
 		return g.ProjectsDir, true
-	case "GIT_OWNER":
+	case "git_owner":
 		return g.GitOwner, true
-	case "GIT_PRIVATE":
+	case "git_private":
 		return g.GitPrivate, true
-	case "DEFAULT_TYPE":
+	case "default_type":
 		return g.DefaultType, true
 	}
 	return "", false
 }
 
-// Set changes a setting by key, and reports whether the key exists.
-func (g *Global) Set(key, value string) bool {
+// ErrUnknownKey is what Set returns for a setting that doesn't exist.
+var ErrUnknownKey = errors.New("unknown setting")
+
+// Set changes a setting by key.
+func (g *Global) Set(key, value string) error {
 	switch key {
-	case "PROJECTS_DIR":
+	case "projects_dir":
 		g.ProjectsDir = ExpandHome(value)
-	case "GIT_OWNER":
+	case "git_owner":
 		g.GitOwner = value
-	case "GIT_PRIVATE":
-		g.GitPrivate = value
-	case "DEFAULT_TYPE":
+	case "git_private":
+		b, err := parseYesNo(value)
+		if err != nil {
+			return err
+		}
+		g.GitPrivate = strconv.FormatBool(b)
+	case "default_type":
 		g.DefaultType = value
 	default:
-		return false
+		return ErrUnknownKey
 	}
-	return true
+	return nil
+}
+
+func parseYesNo(v string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "true", "yes", "y", "1":
+		return true, nil
+	case "false", "no", "n", "0":
+		return false, nil
+	}
+	return false, fmt.Errorf("%q is not true or false", v)
 }
 
 func (g *Global) Save() error {
 	var b strings.Builder
-	b.WriteString("# gd-sync — machine-wide settings. Per-site settings live in each repo's .gd-sync.\n")
-	for _, k := range Keys {
-		v, _ := g.Get(k)
-		fmt.Fprintf(&b, "%s=%s\n", k, v)
-	}
+	b.WriteString("# gd-sync — machine-wide settings. Per-site settings live in each repo's .gd-sync.toml.\n\n")
+	b.WriteString("# Where new site folders are created\n")
+	fmt.Fprintf(&b, "projects_dir = %s\n\n", String(g.ProjectsDir))
+	b.WriteString("# GitHub user or organisation new repos belong to, and whether they're private\n")
+	fmt.Fprintf(&b, "git_owner = %s\n", String(g.GitOwner))
+	fmt.Fprintf(&b, "git_private = %s\n\n", g.GitPrivate)
+	b.WriteString("# The site type 'gd-sync new' suggests: \"wordpress\" or \"astro\"\n")
+	fmt.Fprintf(&b, "default_type = %s\n", String(g.DefaultType))
 	if err := os.MkdirAll(filepath.Dir(g.Path), 0o755); err != nil {
 		return err
 	}
 	return os.WriteFile(g.Path, []byte(b.String()), 0o644)
-}
-
-// ReadKeyValues parses a KEY=value file: blank lines and # comments are
-// skipped, whitespace around keys and values is trimmed. A missing file is
-// an empty map, not an error.
-func ReadKeyValues(path string) (map[string]string, error) {
-	kv := map[string]string{}
-	f, err := os.Open(path)
-	if os.IsNotExist(err) {
-		return kv, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimRight(sc.Text(), "\r")
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		k, v, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		kv[strings.Join(strings.Fields(k), "")] = strings.TrimSpace(v)
-	}
-	return kv, sc.Err()
 }

@@ -58,7 +58,7 @@ func RegistryList() []string {
 	all := readRegistry()
 	var kept []string
 	for _, p := range all {
-		if _, err := os.Stat(filepath.Join(p, ".gd-sync")); err == nil {
+		if _, err := os.Stat(filepath.Join(p, ".gd-sync.toml")); err == nil {
 			kept = append(kept, p)
 		}
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/s-visser/gd-sync/internal/gitx"
 	"github.com/s-visser/gd-sync/internal/remote"
+	"github.com/s-visser/gd-sync/internal/site"
 	"github.com/s-visser/gd-sync/internal/transfer"
 	"github.com/s-visser/gd-sync/internal/ui"
 )
@@ -30,7 +31,7 @@ func cmdSync(c *ctx) error {
 		return err
 	}
 	if len(c.s.Tracked) == 0 {
-		ui.Info("%s has no maintained paths (TRACKED in .gd-sync) — main holds only gd-sync's files", c.s.Name)
+		ui.Info("%s has no maintained paths (tracked in %s) — main holds only gd-sync's files", c.s.Name, site.File)
 	} else if err := c.syncMain(conn); err != nil {
 		return err
 	}

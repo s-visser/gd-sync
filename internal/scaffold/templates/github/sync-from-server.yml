@@ -63,7 +63,7 @@ jobs:
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          printf 'SSH_HOST=%s\nSSH_USER=%s\nSSH_PORT=%s\n' "$SSH_HOST" "$SSH_USER" "${SSH_PORT:-22}" > .gd-sync.local
+          printf 'ssh_host = "%s"\nssh_user = "%s"\nssh_port = %s\n' "$SSH_HOST" "$SSH_USER" "${SSH_PORT:-22}" > .gd-sync.local.toml
 
       # What the server held last night, so only files that changed since are
       # downloaded. Losing it is harmless: the next sync just downloads more.

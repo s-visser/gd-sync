@@ -10,6 +10,7 @@ dist/
 _db/
 
 # connection details for this machine only
+.gd-sync.local.toml
 .gd-sync.local
 `
 
@@ -17,7 +18,7 @@ _db/
 // you maintain: gd-sync's own files. Everything else in the folder is the
 // local mirror of the live site.
 var gitignoreScaffold = []string{
-	".gitignore", ".gitattributes", ".gd-sync", ".devcontainer/", ".github/", ".run/", "GD-SYNC.md", "README.md",
+	".gitignore", ".gitattributes", ".gd-sync.toml", ".devcontainer/", ".github/", ".run/", "GD-SYNC.md", "README.md",
 }
 
 // gitignoreNever stays out of git even inside a path you maintain.
@@ -45,6 +46,7 @@ node_modules/
 _db/
 
 # connection details for this machine only
+.gd-sync.local.toml
 .gd-sync.local
 `
 
@@ -56,7 +58,7 @@ const cheatSheet = "# Working on this site\n\n" +
 	"it works out which site you mean, the way git does.\n\n" +
 	"## The one rule\n\n" +
 	"The live server is the source of truth. `main` mirrors the server's copy of the\n" +
-	"paths you maintain (`TRACKED` in `.gd-sync`). You work on `develop`. Never edit\n" +
+	"paths you maintain (`tracked` in `.gd-sync.toml`). You work on `develop`. Never edit\n" +
 	"files on the server by hand if you can help it.\n\n" +
 	"The rest of the live site — WordPress core, other plugins and themes, uploads — is\n" +
 	"copied into this folder too, so the site runs locally. Git ignores all of it, and\n" +
@@ -85,9 +87,9 @@ const cheatSheet = "# Working on this site\n\n" +
 	"## Files in here\n\n" +
 	"| | |\n" +
 	"|---|---|\n" +
-	"| `.gd-sync` | this site's config — committed, also read by the GitHub workers |\n" +
+	"| `.gd-sync.toml` | this site's config — committed, also read by the GitHub workers |\n" +
 	"| `.gitignore` | generated from `TRACKED` — run `gd-sync scaffold` after changing it |\n" +
-	"| `.gd-sync.local` | your SSH details — not committed |\n" +
+	"| `.gd-sync.local.toml` | your SSH details — not committed |\n" +
 	"| `_db/` | database dumps — not committed |\n" +
 	"| `.devcontainer/` | the local Docker environment, with a local `wp-config.php` and `.htaccess` |\n" +
 	"| `.github/workflows/` | the sync and deploy workers |\n\n" +

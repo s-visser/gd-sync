@@ -2,7 +2,7 @@
 # which may force HTTPS or load server-only files. Written by gd-sync.
 
 # The repo's own files are not part of the site.
-RedirectMatch 404 ^/(\.git|\.gd-sync|\.devcontainer|\.github|_db)(/|$)
+RedirectMatch 404 ^/(\.git|\.gd-sync[^/]*|\.devcontainer|\.github|_db)(/|$)
 
 # BEGIN WordPress
 <IfModule mod_rewrite.c>

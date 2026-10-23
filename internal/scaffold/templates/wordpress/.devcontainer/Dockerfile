@@ -1,5 +1,5 @@
 # One image for the web server and the workspace, on the PHP version the live
-# site runs (PHP_VERSION in .gd-sync), so wp-cli and the site share the same
+# site runs (php_version in .gd-sync.toml), so wp-cli and the site share the same
 # PHP and extensions. Old versions build too: apt-install finds their Debian
 # release on archive.debian.org, and older tools are picked to match.
 ARG PHP_VERSION=8.3

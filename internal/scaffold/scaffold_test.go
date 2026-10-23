@@ -106,7 +106,7 @@ func TestGitignoreKeepsOnlyMaintainedPaths(t *testing.T) {
 		t.Skip("needs git")
 	}
 	scaffolding := []string{
-		".gitignore", ".gitattributes", ".gd-sync", ".devcontainer/docker-compose.yml",
+		".gitignore", ".gitattributes", ".gd-sync.toml", ".devcontainer/docker-compose.yml",
 		".github/workflows/deploy.yml", ".run/x.run.xml", "GD-SYNC.md", "README.md",
 	}
 	mirror := []string{
@@ -114,7 +114,7 @@ func TestGitignoreKeepsOnlyMaintainedPaths(t *testing.T) {
 		"wp-content/plugins/akismet/akismet.php", "wp-content/themes/genesis/style.css",
 		"wp-content/uploads/2024/x.jpg", "wp-content/index.php", "maps/sitemap.xml",
 		"wp-content/themes/acme-old/style.css", "wp-content/plugins/acme custom2/x.php",
-		".gd-sync.local", "_db/dump.sql",
+		".gd-sync.local.toml", "_db/dump.sql",
 	}
 	for _, c := range []struct {
 		tracked    []string

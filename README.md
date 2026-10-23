@@ -53,18 +53,18 @@ site is slower there than on macOS or Linux.
 
 ```bash
 gd-sync config                        # show
-gd-sync config PROJECTS_DIR ~/Sites   # change one
+gd-sync config projects_dir ~/Sites   # change one
 gd-sync config --setup                # walk through them again
 ```
 
 | | |
 |---|---|
-| `PROJECTS_DIR` | where `gd-sync new` creates site folders |
-| `GIT_OWNER` | GitHub user or org for new repos |
-| `GIT_PRIVATE` | `true` / `false` for new repos |
-| `DEFAULT_TYPE` | `wordpress` or `astro` |
+| `projects_dir` | where `gd-sync new` creates site folders |
+| `git_owner` | GitHub user or org for new repos |
+| `git_private` | `true` / `false` for new repos |
+| `default_type` | `wordpress` or `astro` |
 
-Stored in `~/.config/gd-sync/config` (`%AppData%\gd-sync\config` on Windows). With these set, `gd-sync new` already knows the
+Stored in `~/.config/gd-sync/config.toml` (`%AppData%\gd-sync\config.toml` on Windows). With these set, `gd-sync new` already knows the
 folder and the GitHub repo name, so you just press enter.
 
 ---
@@ -87,11 +87,11 @@ GitHub repo and sets the deploy secrets.
 
 It asks which paths you maintain: the plugins and themes you write, e.g.
 `wp-content/plugins/acme-custom`. Leave it empty to start with none. You can
-add them later to `TRACKED` in `.gd-sync`; run `gd-sync scaffold` afterwards so
+add them later to `tracked` in `.gd-sync.toml`; run `gd-sync scaffold` afterwards so
 `.gitignore` follows, and commit the files it now shows on `develop`. The
 server's copy lands on `main` at the next sync, and the two merge cleanly.
 
-Already have a folder with a `.gd-sync` in it — a clone on another computer, say?
+Already have a folder with a `.gd-sync.toml` in it — a clone on another computer, say?
 
 ```bash
 gd-sync adopt
@@ -124,8 +124,26 @@ There is no central site list. Each repo carries its own:
 
 | file | committed? | holds |
 |---|---|---|
-| `.gd-sync` | yes | what the site is and where it deploys — also read by the GitHub workers |
-| `.gd-sync.local` | no | SSH host, user and port for this machine |
+| `.gd-sync.toml` | yes | what the site is and where it deploys — also read by the GitHub workers |
+| `.gd-sync.local.toml` | no | SSH host, user and port for this machine |
+
+```toml
+# .gd-sync.toml
+name = "wolfpackvision.com"
+type = "wordpress"
+
+live_url = "https://wolfpackvision.com"
+local_url = "http://localhost:8080"
+
+remote_root = "/home/you/public_html/wolfpackvision.com"
+
+tracked = [
+  "wp-content/themes/wolfpack",
+]
+exclude = []
+
+php_version = "8.5"
+```
 
 `~/.config/gd-sync/repos` is only a list of folders, so `gd-sync list` and `--all` have
 something to walk. Delete it and nothing breaks; `gd-sync adopt` rebuilds entries.
@@ -138,11 +156,11 @@ The folder is the live web root, plus gd-sync's own files:
 
 | | in git? |
 |---|---|
-| the paths you maintain (`TRACKED`) | yes — on `main` as the server has them, on `develop` as you change them |
-| `.gd-sync`, `.gitignore`, `.devcontainer/`, `.github/`, `.run/`, `README.md`, `GD-SYNC.md` | yes |
+| the paths you maintain (`tracked`) | yes — on `main` as the server has them, on `develop` as you change them |
+| `.gd-sync.toml`, `.gitignore`, `.devcontainer/`, `.github/`, `.run/`, `README.md`, `GD-SYNC.md` | yes |
 | everything else: WordPress core, other plugins and themes, uploads, `wp-config.php` | no — the local copy |
 
-`.gitignore` is generated from `TRACKED`: it ignores everything, then lets back
+`.gitignore` is generated from `tracked`: it ignores everything, then lets back
 in gd-sync's files and each maintained path. With nothing maintained, git holds
 only gd-sync's files.
 

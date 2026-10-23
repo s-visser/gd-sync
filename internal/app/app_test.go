@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/s-visser/gd-sync/internal/config"
 	"github.com/s-visser/gd-sync/internal/remote/sshtest"
 	"github.com/s-visser/gd-sync/internal/scaffold"
 	"github.com/s-visser/gd-sync/internal/site"
@@ -56,10 +57,10 @@ func newWorld(t *testing.T, siteType, tracked, publishDir string) *world {
 
 	w.git("init", "-q")
 	w.git("symbolic-ref", "HEAD", "refs/heads/main")
-	w.write(w.repo, ".gd-sync", "SITE=test\nSITE_TYPE="+siteType+"\nREMOTE_ROOT="+w.server+
-		"\nTRACKED="+tracked+"\nPUBLISH_DIR="+publishDir+"\n")
-	w.write(w.repo, ".gd-sync.local", "SSH_HOST="+w.srv.Host+"\nSSH_USER=test\nSSH_PORT="+w.srv.Port+"\n")
-	w.write(w.repo, ".gitignore", ".gd-sync.local\nwp-content/uploads/\nwp-content/cache/\n*.log\ndist/\n")
+	w.write(w.repo, ".gd-sync.toml", "name = \"test\"\ntype = "+config.String(siteType)+"\nremote_root = "+config.String(w.server)+
+		"\ntracked = "+config.List(strings.Fields(tracked))+"\npublish_dir = "+config.String(publishDir)+"\n")
+	w.write(w.repo, ".gd-sync.local.toml", "ssh_host = "+config.String(w.srv.Host)+"\nssh_user = \"test\"\nssh_port = "+w.srv.Port+"\n")
+	w.write(w.repo, ".gitignore", ".gd-sync.local.toml\nwp-content/uploads/\nwp-content/cache/\n*.log\ndist/\n")
 	w.git("add", "-A")
 	w.git("commit", "-qm", "scaffold")
 	t.Chdir(w.repo)
@@ -498,7 +499,7 @@ func TestNewRefusesNonEmptyFolder(t *testing.T) {
 	if err := emptyOrMissing(dir); err == nil || !strings.Contains(err.Error(), "not an empty folder") {
 		t.Errorf("a folder with a file in it: %v", err)
 	}
-	os.WriteFile(filepath.Join(dir, ".gd-sync"), nil, 0o644)
+	os.WriteFile(filepath.Join(dir, ".gd-sync.toml"), nil, 0o644)
 	if err := emptyOrMissing(dir); err == nil || !strings.Contains(err.Error(), "gd-sync adopt") {
 		t.Errorf("an existing site should point to adopt: %v", err)
 	}
@@ -545,8 +546,8 @@ func TestPHPDetection(t *testing.T) {
 	w.write(ud, "acme.example.host", "documentroot: "+w.server+"\nphpversion: ea-php81\n")
 	w.write(ud, "acme.example.host.cache", "documentroot: "+w.server+"\nphpversion: ea-php80\n")
 	w.mustGD("php")
-	if !strings.Contains(w.read(w.repo, ".gd-sync"), "PHP_VERSION=8.1\n") {
-		t.Errorf(".gd-sync:\n%s", w.read(w.repo, ".gd-sync"))
+	if !strings.Contains(w.read(w.repo, ".gd-sync.toml"), "php_version = \"8.1\"\n") {
+		t.Errorf(".gd-sync.toml:\n%s", w.read(w.repo, ".gd-sync.toml"))
 	}
 	if !strings.Contains(w.read(w.repo, ".devcontainer/.env"), "PHP_VERSION=8.1\n") {
 		t.Errorf(".devcontainer/.env:\n%s", w.read(w.repo, ".devcontainer/.env"))
@@ -557,12 +558,12 @@ func TestPHPDetection(t *testing.T) {
 	w.write(w.srv.Home, ".htaccess", "AddHandler application/x-httpd-ea-php73 .php\n")
 	w.write(w.server, ".htaccess", "# AddHandler application/x-httpd-ea-php70 .php\nAddHandler application/x-httpd-alt-php74___lsphp .php\n")
 	w.mustGD("php")
-	if !strings.Contains(w.read(w.repo, ".gd-sync"), "PHP_VERSION=7.4\n") {
-		t.Errorf("nearest .htaccess should win:\n%s", w.read(w.repo, ".gd-sync"))
+	if !strings.Contains(w.read(w.repo, ".gd-sync.toml"), "php_version = \"7.4\"\n") {
+		t.Errorf("nearest .htaccess should win:\n%s", w.read(w.repo, ".gd-sync.toml"))
 	}
 	os.Remove(filepath.Join(w.server, ".htaccess"))
 	w.mustGD("php")
-	if !strings.Contains(w.read(w.repo, ".gd-sync"), "PHP_VERSION=7.3\n") {
-		t.Errorf("a parent folder's .htaccess applies too:\n%s", w.read(w.repo, ".gd-sync"))
+	if !strings.Contains(w.read(w.repo, ".gd-sync.toml"), "php_version = \"7.3\"\n") {
+		t.Errorf("a parent folder's .htaccess applies too:\n%s", w.read(w.repo, ".gd-sync.toml"))
 	}
 }

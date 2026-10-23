@@ -1,7 +1,7 @@
 name: ${COMPOSE_PROJECT_NAME:-gd-sync-site}
 
 # The web server and the workspace share one image, built on the PHP version
-# the live site runs (PHP_VERSION, from .gd-sync via .env).
+# the live site runs (php_version in .gd-sync.toml, passed on through .env).
 x-php: &php
   build:
     context: .

@@ -9,6 +9,7 @@ import (
 
 	"github.com/s-visser/gd-sync/internal/remote"
 	"github.com/s-visser/gd-sync/internal/scaffold"
+	"github.com/s-visser/gd-sync/internal/site"
 	"github.com/s-visser/gd-sync/internal/ui"
 )
 
@@ -110,7 +111,7 @@ func phpDotted(v string) string {
 func phpForImage(v string) string {
 	if v == "" {
 		ui.Warn("Could not find out which PHP the live site runs — using PHP %s locally", defaultPHP)
-		ui.Info("Set PHP_VERSION in .gd-sync by hand, then: gd-sync scaffold && gd-sync up")
+		ui.Info("Set php_version in %s by hand, then: gd-sync scaffold && gd-sync up", site.File)
 		return defaultPHP
 	}
 	if phpOlder(v, oldestImage) {
@@ -141,7 +142,7 @@ func phpOlder(a, b string) bool {
 }
 
 // checkPHP compares the live PHP with the site's PHP_VERSION. With update,
-// it rewrites .gd-sync and the devcontainer's .env to match.
+// it rewrites .gd-sync.toml and the devcontainer's .env to match.
 func (c *ctx) checkPHP(conn *remote.Conn, update bool) (changed bool, err error) {
 	live, source := c.livePHP(conn)
 	if live == "" {
@@ -169,7 +170,7 @@ func (c *ctx) checkPHP(conn *remote.Conn, update bool) (changed bool, err error)
 	if err := scaffold.Devcontainer(c.s); err != nil {
 		return false, err
 	}
-	ui.OK("PHP %s, the same as live (%s) — written to .gd-sync", want, source)
+	ui.OK("PHP %s, the same as live (%s) — written to %s", want, source, site.File)
 	return true, nil
 }
 
@@ -188,6 +189,6 @@ func cmdPHP(c *ctx) error {
 	if err != nil || !changed {
 		return err
 	}
-	ui.Info("Commit .gd-sync, then rebuild the local site: gd-sync up")
+	ui.Info("Commit %s, then rebuild the local site: gd-sync up", site.File)
 	return nil
 }
