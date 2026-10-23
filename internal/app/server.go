@@ -194,6 +194,20 @@ func cmdDown(c *ctx) error {
 	return nil
 }
 
+// cmdTerm opens a terminal in the devcontainer's workspace, starting the
+// container first if it isn't running.
+func cmdTerm(c *ctx) error {
+	if inContainer() {
+		return errors.New("You're already inside the devcontainer")
+	}
+	if !running(filepath.Join(c.s.Repo, ".devcontainer", "docker-compose.yml"), "workspace") {
+		if err := cmdUp(c); err != nil {
+			return err
+		}
+	}
+	return compose(c, "exec", "workspace", "bash")
+}
+
 // cmdShell hands over to the system ssh for a real interactive terminal.
 // Windows 10 and later ship it too.
 func cmdShell(c *ctx) error {

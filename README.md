@@ -134,6 +134,7 @@ gd-sync merge      # sync, merge develop, go live   ← the normal one
 gd-sync status     # what's drifted (read-only)
 gd-sync db         # live database -> _db/, imported into the container
 gd-sync up / down  # start / stop the devcontainer
+gd-sync term       # a terminal inside the devcontainer
 gd-sync deploy     # ship main by hand, if you'd rather not involve GitHub
 gd-sync shell      # SSH in
 ```

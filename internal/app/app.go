@@ -41,6 +41,7 @@ reading that repo's own .gd-sync.toml file. No site name to remember or type.
 
   gd-sync db              download the live database into _db/
   gd-sync up / down       start / stop the devcontainer
+  gd-sync term            open a terminal inside the devcontainer
   gd-sync php             make the devcontainer run the live site's PHP version
 
   gd-sync shell           SSH into the server
@@ -123,7 +124,7 @@ func run(args []string) error {
 
 	if run, ok := map[string]func(*ctx) error{
 		"deploy": cmdDeploy, "up": cmdUp, "down": cmdDown, "shell": cmdShell,
-		"key": cmdKey, "secrets": cmdSecrets, "scaffold": cmdScaffold, "php": cmdPHP,
+		"term": cmdTerm, "key": cmdKey, "secrets": cmdSecrets, "scaffold": cmdScaffold, "php": cmdPHP,
 	}[cmd]; ok {
 		return inSite(cfg, "", run)
 	}
