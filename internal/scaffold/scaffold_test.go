@@ -59,6 +59,9 @@ func TestAllWordPress(t *testing.T) {
 	if !strings.Contains(read("README.md"), "# acme.nl") {
 		t.Error("README not written for the domain")
 	}
+	if !strings.Contains(read("README.md"), "`dev` / `dev`") {
+		t.Error("README lacks the local admin login")
+	}
 	for _, f := range []string{"deploy.yml", "sync-from-server.yml", "verify-main.yml"} {
 		wf := read(".github/workflows/" + f)
 		if strings.Contains(wf, "__GD_SYNC_VERSION__") || strings.Contains(wf, "rsync") {

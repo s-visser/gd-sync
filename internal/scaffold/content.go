@@ -120,14 +120,14 @@ const cheatSheet = "# Working on this site\n\n" +
 	"`gd-sync adopt` asks for the SSH details, since those aren't committed. Then\n" +
 	"`gd-sync sync` brings in the rest of the site.\n"
 
-// readme takes the domain, live URL, local URL and stack.
+// readme takes the domain, live URL, local URL, stack and any extra table rows.
 const readme = `# %s
 
 | | |
 |---|---|
 | Live | %s |
 | Local | %s |
-| Stack | %s |
+%s| Stack | %s |
 | Hosting | GoDaddy cPanel |
 
 See [GD-SYNC.md](GD-SYNC.md) for how to pull, run and deploy this site.

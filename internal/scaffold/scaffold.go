@@ -179,7 +179,12 @@ func Docs(s *site.Site) error {
 	if kind == "" {
 		kind = s.Type
 	}
-	return write(s, "README.md", fmt.Sprintf(readme, domain, s.LiveURL, s.LocalURL, kind))
+	login := ""
+	if s.Type == "wordpress" {
+		// The local admin post-create.sh makes in every WordPress container.
+		login = fmt.Sprintf("| Local admin | %s/wp-admin — `dev` / `dev` |\n", strings.TrimSuffix(s.LocalURL, "/"))
+	}
+	return write(s, "README.md", fmt.Sprintf(readme, domain, s.LiveURL, s.LocalURL, login, kind))
 }
 
 // Devcontainer copies the template for the site's type and fills in the

@@ -28,6 +28,12 @@ if [ -n "$DUMP" ]; then
   echo "==> Importing the live database: $(basename "$DUMP")"
   wpc db import "$DUMP"
 
+  # Straight after the import, so the login works while the URLs are rewritten.
+  echo "==> Creating a local admin (dev / dev)"
+  wpc user create dev dev@example.test --role=administrator --user_pass=dev --quiet 2>/dev/null \
+    || wpc user update dev --user_pass=dev --role=administrator --quiet \
+    || echo "    Could not create the dev user — the live admins' logins still work"
+
   if [ -n "${LIVE_URL:-}" ]; then
     echo "==> Rewriting URLs: $LIVE_URL -> $LOCAL_URL"
     lh="${LIVE_URL#http://}"; lh="${lh#https://}"; lh="${lh%/}"
@@ -37,10 +43,6 @@ if [ -n "$DUMP" ]; then
     wpc option update home    "$LOCAL_URL" --quiet || true
     wpc option update siteurl "$LOCAL_URL" --quiet || true
   fi
-
-  echo "==> Creating a local admin (dev / dev)"
-  wpc user create dev dev@example.test --role=administrator --user_pass=dev --quiet 2>/dev/null \
-    || wpc user update dev --user_pass=dev --quiet 2>/dev/null || true
 
 elif ! wpc core is-installed 2>/dev/null; then
   echo "==> No dump found — installing a blank WordPress"
