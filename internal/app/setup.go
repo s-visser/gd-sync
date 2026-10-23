@@ -306,7 +306,7 @@ func cmdNew(g *config.Global) error {
 	ui.Say("")
 	ui.Info("cd %s", dir)
 	ui.Info("Check what git will take in — gd-sync's files, and the paths you maintain:  git status")
-	firstCommitHelp(stype)
+	firstCommitHelp(stype, git.HasRemote())
 	ui.Info("Then open it in your JetBrains IDE and let it start the devcontainer, or: gd-sync up")
 	return nil
 }
@@ -387,15 +387,24 @@ func freePorts(s *site.Site, use func(int) string) {
 	}
 }
 
-// firstCommitHelp says how to make a new site's first commit.
-func firstCommitHelp(stype string) {
-	ui.Info("Then make the first commit and push it:")
+// firstCommitHelp says how to make a new site's first commit, and to push it
+// when the site has a remote to push to.
+func firstCommitHelp(stype string, pushed bool) {
+	if pushed {
+		ui.Info("Then make the first commit and push it:")
+	} else {
+		ui.Info("Then make the first commit:")
+	}
 	if stype == "wordpress" {
 		ui.Info(`  git add -A && git commit -m "[server-sync] Live server state"`)
 	} else {
 		ui.Info(`  git add -A && git commit -m "Scaffold"`)
 	}
-	ui.Info("  git branch develop && git push -u origin main develop")
+	if pushed {
+		ui.Info("  git branch develop && git push -u origin main develop")
+	} else {
+		ui.Info("  git branch develop")
+	}
 	if stype == "wordpress" {
 		ui.Info("[server-sync] tells gd-sync and the deploy worker that main is what the server has.")
 	}

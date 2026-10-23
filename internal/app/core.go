@@ -173,7 +173,7 @@ func (c *ctx) needMain() error {
 		return nil
 	}
 	ui.Warn("main has no commits yet. Check what git will take in with: git status")
-	firstCommitHelp(c.s.Type)
+	firstCommitHelp(c.s.Type, c.git.HasRemote())
 	return errors.New("Make the first commit on main, then run this again")
 }
 

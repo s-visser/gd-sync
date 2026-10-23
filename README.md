@@ -77,16 +77,19 @@ from it, so you press enter for the rest.
 gd-sync new
 ```
 
-Asks for the domain, the site's name, local folder, GitHub repo, site type and
-the SSH details. The name defaults to the full domain, and so do the folder and
-the repo: `wolfpackvision.com` → `~/Sites/wolfpackvision.com` and
-`you/wolfpackvision.com`. Like `git clone`, it refuses a folder that already
+Asks for the domain, the site's name, local folder, site type, the SSH details,
+the paths you maintain and whether to create a GitHub repo. The name defaults
+to the full domain, and so do the folder and the repo: `wolfpackvision.com` →
+`~/Sites/wolfpackvision.com` and `you/wolfpackvision.com`. The site always gets
+a local git repo; the GitHub question only decides whether it is published. It
+defaults to yes when you maintain paths (and for Astro sites), and to no when
+you don't — then there is nothing of yours in git worth pushing yet. Like `git clone`, it refuses a folder that already
 has something in it. Then it creates the folder and a git repo, writes the config, installs
 the devcontainer and the three workflows, tests SSH, matches the live PHP version,
 offers to install your SSH key, downloads the whole live site into the folder,
 asks about vendor folders, credentials and large binaries in the paths you
-maintain, offers to pull the database, creates the GitHub repo — empty — and sets
-the deploy secrets.
+maintain, offers to pull the database and, if you asked for one, creates the GitHub
+repo — empty — and sets the deploy secrets.
 
 It commits and pushes nothing. Check what git will take in, then make the first
 commit yourself:
