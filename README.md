@@ -237,7 +237,7 @@ The GitHub workers run the same gd-sync commands, so they follow the same rules.
 ### WordPress
 
 `wordpress:php8.3-apache` + MariaDB 11 + Mailpit, plus a PHP workspace container
-with WP-CLI, Composer and the mysql client.
+with WP-CLI, Composer, the mysql client, git, gh and gd-sync.
 
 - It serves the site folder itself — the paths you maintain plus the local copy
   of everything else, so core, plugins and themes are the live versions. Edit
@@ -261,6 +261,23 @@ with WP-CLI, Composer and the mysql client.
 | Admin | http://localhost:8080/wp-admin — `dev` / `dev` |
 | Mail | http://localhost:8025 |
 | MySQL | 127.0.0.1:13306 — `wordpress` / `wordpress` |
+
+### gd-sync inside the container
+
+Both devcontainers work on their own, so an IDE that runs inside the container
+(JetBrains does) has everything it needs; VS Code, or a terminal on your
+computer, keeps working from the host as before.
+
+- gd-sync is built into the image with `go install`, at the version that wrote
+  the folder (`GD_SYNC_VERSION` in `.devcontainer/.env`, like the workflows).
+  Run `gd-sync scaffold` after upgrading and rebuild the container to follow.
+- Your `~/.ssh` is mounted at the container user's `~/.ssh`, read-write, so the
+  keys, `known_hosts` and `gd-sync key` are shared with your computer.
+- `gh` keeps its login in the `gd-sync-gh` Docker volume, shared by every
+  gd-sync site. Log in once, in any of them: `gh auth login && gh auth setup-git`.
+  After that `git push`, `gd-sync merge` and `gd-sync secrets` work in here.
+- `gd-sync db` imports the dump straight into the container's database.
+  `gd-sync up` and `down` drive Docker, so they only run on your computer.
 
 ### Astro
 

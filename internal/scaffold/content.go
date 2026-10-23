@@ -79,7 +79,7 @@ const cheatSheet = "# Working on this site\n\n" +
 	"| `gd-sync sync` | update `main` and the local copy with what's on the server right now |\n" +
 	"| `gd-sync status` | what differs between the server and `main` (changes nothing) |\n" +
 	"| `gd-sync db` | download the live database into `_db/` |\n" +
-	"| `gd-sync up` / `gd-sync down` | start / stop the local Docker site |\n" +
+	"| `gd-sync up` / `gd-sync down` | start / stop the local Docker site (from your computer) |\n" +
 	"| `gd-sync merge` | the safe way to go live: sync, merge, deploy |\n" +
 	"| `gd-sync deploy` | upload `main` by hand, skipping GitHub |\n" +
 	"| `gd-sync shell` | SSH into the server |\n" +
@@ -93,6 +93,11 @@ const cheatSheet = "# Working on this site\n\n" +
 	"| `_db/` | database dumps — not committed |\n" +
 	"| `.devcontainer/` | the local Docker environment, with a local `wp-config.php` and `.htaccess` |\n" +
 	"| `.github/workflows/` | the sync and deploy workers |\n\n" +
+	"## Inside the devcontainer\n\n" +
+	"gd-sync, git and gh are installed in the container, so everything above works from\n" +
+	"the IDE's terminal too, except `gd-sync up` / `down`: those run on your computer.\n" +
+	"Your `~/.ssh` is mounted in, so the server connection is the same. For GitHub, run\n" +
+	"once, in any gd-sync container: `gh auth login && gh auth setup-git`.\n\n" +
 	"## If something looks wrong\n\n" +
 	"`gd-sync status` shows the difference without touching anything.\n\n" +
 	"Every deploy backs the server up first, to `~/gd-sync-backups/` on the server.\n" +

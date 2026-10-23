@@ -57,6 +57,17 @@ func cmdDB(c *ctx) error {
 	ui.OK("%s -> _db/%s", ui.Size(st.Size()), filepath.Base(dump))
 	pruneDumps(dbDir, c.s.Name)
 
+	if inContainer() {
+		ui.Step("Loading it into the devcontainer's database")
+		cmd := exec.Command("bash", ".devcontainer/post-create.sh")
+		cmd.Dir, cmd.Stdout, cmd.Stderr = c.s.Repo, os.Stdout, os.Stderr
+		if cmd.Run() == nil {
+			ui.OK("Local site now matches live")
+		} else {
+			ui.Info("Import it by hand: bash .devcontainer/post-create.sh")
+		}
+		return nil
+	}
 	dc := filepath.Join(c.s.Repo, ".devcontainer", "docker-compose.yml")
 	if running(dc, "db") {
 		ui.Step("Loading it into the running devcontainer")
@@ -91,6 +102,18 @@ func pruneDumps(dir, name string) {
 	}
 }
 
+// inContainer reports whether gd-sync runs inside the devcontainer, where
+// docker isn't available but the database is next door.
+func inContainer() bool { return os.Getenv("GD_SYNC_CONTAINER") != "" }
+
+// hostOnly refuses the commands that drive Docker from outside.
+func hostOnly(what string) error {
+	if inContainer() {
+		return fmt.Errorf("You're inside the devcontainer — %s it from your computer or the IDE", what)
+	}
+	return nil
+}
+
 // running reports whether a compose service is up.
 func running(composeFile, service string) bool {
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -114,6 +137,9 @@ func compose(c *ctx, args ...string) error {
 // is still empty — it also runs the setup an IDE would: import the newest
 // dump, rewrite URLs, create the dev admin.
 func cmdUp(c *ctx) error {
+	if err := hostOnly("start"); err != nil {
+		return err
+	}
 	if c.s.Type == "wordpress" {
 		v := c.s.PHPVersion
 		if v == "" {
@@ -146,6 +172,9 @@ func localDBEmpty(c *ctx) bool {
 }
 
 func cmdDown(c *ctx) error {
+	if err := hostOnly("stop"); err != nil {
+		return err
+	}
 	if err := compose(c, "down"); err != nil {
 		return err
 	}

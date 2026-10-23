@@ -8,11 +8,12 @@ x-php: &php
     dockerfile: Dockerfile
     args:
       PHP_VERSION: ${PHP_VERSION:-8.3}
+      GD_SYNC_VERSION: ${GD_SYNC_VERSION:-latest}
   image: gd-sync-wordpress:php${PHP_VERSION:-8.3}
 
 services:
-  # The container JetBrains / VS Code attaches to. Has wp-cli, composer and
-  # the same PHP as the site.
+  # The container JetBrains / VS Code attaches to. Has wp-cli, composer, git,
+  # gh, gd-sync and the same PHP as the site.
   workspace:
     <<: *php
     user: vscode
@@ -22,9 +23,16 @@ services:
       - ./wp-config.local.php:/var/www/html/wp-config.php:ro
       - ./htaccess:/var/www/html/.htaccess:ro
       - ..:/gd-sync/site:ro
+      # Your SSH keys and known hosts, so gd-sync reaches the server from in
+      # here as it does from your computer.
+      - ${HOME:-${USERPROFILE}}/.ssh:/home/vscode/.ssh
+      # One GitHub login for every gd-sync site: run 'gh auth login' once.
+      - gh-config:/home/vscode/.config/gh
     environment:
       LOCAL_URL: ${LOCAL_URL:-http://localhost:8080}
       LIVE_URL: ${LIVE_URL:-}
+      # Tells gd-sync it runs inside the devcontainer.
+      GD_SYNC_CONTAINER: "1"
     working_dir: /workspace
     command: sleep infinity
     depends_on:
@@ -82,3 +90,5 @@ services:
 
 volumes:
   db-data:
+  gh-config:
+    name: gd-sync-gh

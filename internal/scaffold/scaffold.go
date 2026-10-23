@@ -173,7 +173,8 @@ func Devcontainer(s *site.Site) error {
 	if err != nil {
 		return err
 	}
-	env := fmt.Sprintf("COMPOSE_PROJECT_NAME=%s\nLIVE_URL=%s\nLOCAL_URL=%s\n", composeName(s.Name), s.LiveURL, s.LocalURL)
+	// GD_SYNC_VERSION is the gd-sync the container installs, like the workflows.
+	env := fmt.Sprintf("COMPOSE_PROJECT_NAME=%s\nLIVE_URL=%s\nLOCAL_URL=%s\nGD_SYNC_VERSION=%s\n", composeName(s.Name), s.LiveURL, s.LocalURL, ToolVersion)
 	if s.Type == "wordpress" && s.PHPVersion != "" {
 		env += "PHP_VERSION=" + s.PHPVersion + "\n"
 	}
@@ -194,8 +195,9 @@ func composeName(name string) string {
 	}, name)
 }
 
-// ToolVersion is the gd-sync version the workflows install: the version of
-// the gd-sync that wrote them, so workers and your computer behave the same.
+// ToolVersion is the gd-sync version the workflows and the devcontainer
+// install: the version of the gd-sync that wrote them, so workers, the
+// container and your computer behave the same.
 var ToolVersion = "latest"
 
 func Workflows(s *site.Site) error {

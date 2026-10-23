@@ -5,15 +5,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        GD_SYNC_VERSION: ${GD_SYNC_VERSION:-latest}
     volumes:
       - ..:/workspace:cached
       # keep node_modules inside the container — far faster than a bind mount,
       # and avoids native-module mismatches with the host OS
       - node-modules:/workspace/node_modules
+      # Your SSH keys and known hosts, so gd-sync reaches the server from in
+      # here as it does from your computer.
+      - ${HOME:-${USERPROFILE}}/.ssh:/home/node/.ssh
+      # One GitHub login for every gd-sync site: run 'gh auth login' once.
+      - gh-config:/home/node/.config/gh
     environment:
       ASTRO_TELEMETRY_DISABLED: "1"
       LOCAL_URL: ${LOCAL_URL:-http://localhost:4321}
       LIVE_URL: ${LIVE_URL:-}
+      # Tells gd-sync it runs inside the devcontainer.
+      GD_SYNC_CONTAINER: "1"
     working_dir: /workspace
     command: sleep infinity
     ports:
@@ -22,3 +31,5 @@ services:
 
 volumes:
   node-modules:
+  gh-config:
+    name: gd-sync-gh

@@ -64,6 +64,14 @@ done
 
 chmod -R a+rwX "$WP/wp-content/uploads" 2>/dev/null || true
 
+# git pushes over https with the shared gh login, once there is one.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  gh auth setup-git >/dev/null 2>&1 || true
+  GH_NOTE="GitHub     logged in (gh)"
+else
+  GH_NOTE="GitHub     not logged in yet — run once: gh auth login && gh auth setup-git"
+fi
+
 cat <<EOF
 
   Ready.
@@ -71,6 +79,8 @@ cat <<EOF
     Admin      $LOCAL_URL/wp-admin   (dev / dev)
     Mail       http://localhost:8025
     Database   127.0.0.1:13306  wordpress / wordpress
+    $GH_NOTE
 
   The site folder is mounted live — edit in the IDE, refresh the browser.
+  gd-sync and git work in here too: gd-sync sync, gd-sync merge, gd-sync db
 EOF
