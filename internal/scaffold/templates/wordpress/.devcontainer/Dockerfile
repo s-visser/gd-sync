@@ -10,13 +10,15 @@ ARG GD_SYNC_VERSION=latest
 FROM debian:bookworm-slim AS keys
 
 # gd-sync itself, the version that wrote this folder (GD_SYNC_VERSION in .env),
-# so it runs inside the container too. A static binary, so it runs on any
-# Debian the PHP image is built on. Best effort: the site runs without it.
+# so it runs inside the container too. Straight from GitHub, not the Go proxy,
+# which can answer "latest" with an older commit for a while. A static binary,
+# so it runs on any Debian the PHP image is built on. Best effort: the site
+# runs without it.
 FROM golang:1 AS gd-sync
 ARG GD_SYNC_VERSION
 RUN set -eux; mkdir -p /out; \
     flags=; [ "$GD_SYNC_VERSION" = latest ] || flags="-X github.com/s-visser/gd-sync/internal/app.Version=$GD_SYNC_VERSION"; \
-    CGO_ENABLED=0 GOBIN=/out go install -ldflags "-s -w $flags" github.com/s-visser/gd-sync/cmd/gd-sync@"$GD_SYNC_VERSION" \
+    CGO_ENABLED=0 GOBIN=/out GOPRIVATE=github.com/s-visser/gd-sync go install -ldflags "-s -w $flags" github.com/s-visser/gd-sync/cmd/gd-sync@"$GD_SYNC_VERSION" \
       || echo "gd-sync $GD_SYNC_VERSION could not be installed — skipped"
 
 FROM wordpress:php${PHP_VERSION}-apache

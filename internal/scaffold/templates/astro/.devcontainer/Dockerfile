@@ -1,12 +1,14 @@
 ARG GD_SYNC_VERSION=latest
 
 # gd-sync itself, the version that wrote this folder (GD_SYNC_VERSION in .env),
-# so it runs inside the container too. Best effort: the site builds without it.
+# so it runs inside the container too. Straight from GitHub, not the Go proxy,
+# which can answer "latest" with an older commit for a while. Best effort: the
+# site builds without it.
 FROM golang:1 AS gd-sync
 ARG GD_SYNC_VERSION
 RUN set -eux; mkdir -p /out; \
     flags=; [ "$GD_SYNC_VERSION" = latest ] || flags="-X github.com/s-visser/gd-sync/internal/app.Version=$GD_SYNC_VERSION"; \
-    CGO_ENABLED=0 GOBIN=/out go install -ldflags "-s -w $flags" github.com/s-visser/gd-sync/cmd/gd-sync@"$GD_SYNC_VERSION" \
+    CGO_ENABLED=0 GOBIN=/out GOPRIVATE=github.com/s-visser/gd-sync go install -ldflags "-s -w $flags" github.com/s-visser/gd-sync/cmd/gd-sync@"$GD_SYNC_VERSION" \
       || echo "gd-sync $GD_SYNC_VERSION could not be installed — skipped"
 
 FROM mcr.microsoft.com/devcontainers/javascript-node:22-bookworm

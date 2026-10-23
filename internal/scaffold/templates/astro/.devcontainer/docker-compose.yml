@@ -23,6 +23,9 @@ services:
       LIVE_URL: ${LIVE_URL:-}
       # Tells gd-sync it runs inside the devcontainer.
       GD_SYNC_CONTAINER: "1"
+      # gh keeps its login on the shared volume, whatever XDG_CONFIG_HOME the
+      # IDE sets (JetBrains points it into its own folder, which a rebuild wipes).
+      GH_CONFIG_DIR: /home/node/.config/gh
     working_dir: /workspace
     command: sleep infinity
     ports:
