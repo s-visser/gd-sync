@@ -85,6 +85,12 @@ func TestAllWordPress(t *testing.T) {
 	}
 }
 
+func TestComposeName(t *testing.T) {
+	if got := composeName("WolfpackVision.com"); got != "wolfpackvision-com" {
+		t.Errorf("composeName = %q", got)
+	}
+}
+
 func TestEmbeddedTemplatesIncludeDotFolders(t *testing.T) {
 	for _, p := range []string{"wordpress/.devcontainer/post-create.sh", "astro/.devcontainer/Dockerfile"} {
 		if _, err := embedded.Open("templates/" + p); err != nil {

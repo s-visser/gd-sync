@@ -84,6 +84,11 @@ func cmdScaffold(c *ctx) error {
 	}
 	ui.OK("Scaffolding refreshed for %s", c.s.Name)
 	ui.Info("GD-SYNC.md, devcontainer, .github/workflows, .run, .gd-sync, .gitignore, .gitattributes")
+	if out, _ := c.git.Output("ls-files", "--others", "--exclude-standard", "--directory"); strings.TrimSpace(out) != "" {
+		ui.Info("Not in git yet — newly maintained paths show up here. Commit them on develop:")
+		ui.List("", "", strings.Fields(out))
+		ui.Info("git add -A && git commit -m 'Maintain ...', then: gd-sync merge")
+	}
 	return nil
 }
 
@@ -134,18 +139,18 @@ func cmdNew(g *config.Global) error {
 	ui.Say("")
 	fmt.Printf("%sNew site%s — a few questions, then everything gets built.\n\n", ui.B, ui.N)
 
-	domain := ui.Ask("Domain (e.g. acme.nl):", "")
+	domain := bareDomain(ui.Ask("Domain (e.g. acme.nl):", ""))
 	if domain == "" {
 		return errors.New("A domain is required")
 	}
-	short, _, _ := strings.Cut(domain, ".")
-	name := ui.Ask("Short name for this site:", alnumDash(short))
+	name := siteName(ui.Ask("Name for this site:", siteName(domain)))
 	if name == "" {
-		return errors.New("A short name is required")
+		return errors.New("A name is required")
 	}
 	dir := config.ExpandHome(ui.Ask("Local folder:", filepath.Join(g.ProjectsDir, name)))
-	if dir, _ = filepath.Abs(dir); fileExists(filepath.Join(dir, ".gd-sync")) {
-		return fmt.Errorf("%s is already a gd-sync site — use 'gd-sync adopt' there instead", dir)
+	dir, _ = filepath.Abs(dir)
+	if err := emptyOrMissing(dir); err != nil {
+		return err
 	}
 	ghDefault := ""
 	if g.GitOwner != "" {
@@ -171,7 +176,7 @@ func cmdNew(g *config.Global) error {
 	if stype == "wordpress" {
 		fmt.Fprintln(os.Stderr)
 		ui.Info("Which paths do YOU maintain? Space separated, relative to the web root,")
-		ui.Info("e.g. wp-content/plugins/%s-custom. Only these go into git; the rest of", name)
+		ui.Info("e.g. wp-content/plugins/%s-custom. Only these go into git; the rest of", strings.SplitN(name, ".", 2)[0])
 		ui.Info("the site is downloaded too, so it runs locally, but git ignores it.")
 		ui.Info("Leave empty to start with none — add them to TRACKED in .gd-sync later.")
 		s.Tracked = strings.Fields(ui.Ask("Maintained paths:", ""))
@@ -284,13 +289,45 @@ func cmdNew(g *config.Global) error {
 	return nil
 }
 
-func alnumDash(s string) string {
+// bareDomain turns what was typed — maybe a URL — into a domain:
+// "https://Acme.nl/" becomes "acme.nl".
+func bareDomain(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if _, rest, ok := strings.Cut(s, "://"); ok {
+		s = rest
+	}
+	s, _, _ = strings.Cut(s, "/")
+	return s
+}
+
+// siteName keeps what is safe in a folder, a repo name and a shell command:
+// letters, digits, dots, dashes and underscores.
+func siteName(s string) string {
 	return strings.Map(func(r rune) rune {
-		if r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' {
+		if r == '-' || r == '.' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' {
 			return r
 		}
 		return -1
 	}, s)
+}
+
+// emptyOrMissing refuses a folder that already has something in it, the way
+// git clone does.
+func emptyOrMissing(dir string) error {
+	if fileExists(filepath.Join(dir, ".gd-sync")) {
+		return fmt.Errorf("%s is already a gd-sync site — use 'gd-sync adopt' there instead", dir)
+	}
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return fmt.Errorf("%s already exists and is not an empty folder", dir)
+	}
+	return nil
 }
 
 func fileExists(p string) bool {

@@ -17,6 +17,7 @@ import (
 
 	"github.com/s-visser/gd-sync/internal/gitx"
 	"github.com/s-visser/gd-sync/internal/remote"
+	"github.com/s-visser/gd-sync/internal/ui"
 )
 
 // Fetched is a server file saved locally, with its git blob id.
@@ -24,8 +25,8 @@ type Fetched struct{ File, Blob string }
 
 // Fetch downloads the given server files as one tar stream into dir. Files
 // are saved under numbered names, so no server path ever has to be a valid
-// local name until it is placed in the repo.
-func Fetch(conn *remote.Conn, root string, paths []string, dir string) (map[string]Fetched, error) {
+// local name until it is placed in the repo. Progress may be nil.
+func Fetch(conn *remote.Conn, root string, paths []string, dir string, progress *ui.Progress) (map[string]Fetched, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
@@ -40,9 +41,10 @@ func Fetch(conn *remote.Conn, root string, paths []string, dir string) (map[stri
 	got := map[string]Fetched{}
 	err := readTar(pr, func(name string, size int64, r io.Reader) error {
 		file := filepath.Join(dir, strconv.Itoa(len(got)))
-		blob, err := saveHashed(file, size, r)
+		blob, err := saveHashed(file, size, counter{r, progress})
 		if err == nil {
 			got[name] = Fetched{File: file, Blob: blob}
+			progress.File()
 		}
 		return err
 	})
@@ -51,6 +53,18 @@ func Fetch(conn *remote.Conn, root string, paths []string, dir string) (map[stri
 		err = rerr // tar on the server reports files that vanished
 	}
 	return got, err
+}
+
+// counter reports bytes read to a progress bar.
+type counter struct {
+	r io.Reader
+	p *ui.Progress
+}
+
+func (c counter) Read(b []byte) (int, error) {
+	n, err := c.r.Read(b)
+	c.p.Add(int64(n))
+	return n, err
 }
 
 func readTar(r io.Reader, each func(name string, size int64, r io.Reader) error) error {

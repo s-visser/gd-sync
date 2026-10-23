@@ -49,8 +49,10 @@ func Compare(conn *remote.Conn, repo gitx.Repo, root string, m Matcher, known St
 	cand, gone := PullPlan(known, main, server)
 	c := &Comparison{Server: server, Main: main, Gone: gone, Fetched: map[string]Fetched{}}
 	if len(cand) > 0 {
-		ui.Info("fetching %d file(s) whose size or date moved", len(cand))
-		got, err := Fetch(conn, root, cand, workDir)
+		ui.Info("fetching %d file(s) whose size or date moved, %s", len(cand), ui.Size(server.Size(cand)))
+		progress := ui.NewProgress(server.Size(cand), len(cand))
+		got, err := Fetch(conn, root, cand, workDir, progress)
+		progress.Done()
 		if err != nil {
 			ui.Warn("Some files could not be fetched — they are skipped: %v", err)
 		}
@@ -151,7 +153,7 @@ func ServerBlobs(conn *remote.Conn, root string, paths []string, server Manifest
 	if len(present) == 0 {
 		return blobs, nil
 	}
-	got, err := Fetch(conn, root, present, workDir)
+	got, err := Fetch(conn, root, present, workDir, nil)
 	for _, p := range present {
 		f, ok := got[p]
 		if !ok {

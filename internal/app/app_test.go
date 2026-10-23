@@ -466,3 +466,38 @@ func TestSyncWithNothingMaintained(t *testing.T) {
 	w.mustGD("status")
 	w.mustGD("deploy")
 }
+
+func TestNewSiteDefaults(t *testing.T) {
+	for in, want := range map[string]string{
+		"wolfpackvision.com":          "wolfpackvision.com",
+		"https://WolfpackVision.com/": "wolfpackvision.com",
+		" http://acme.nl/some/page ":  "acme.nl",
+		"shop.acme.co.uk":             "shop.acme.co.uk",
+	} {
+		if got := bareDomain(in); got != want {
+			t.Errorf("bareDomain(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := siteName("acme.nl; rm -rf ~"); got != "acme.nlrm-rf" {
+		t.Errorf("siteName kept unsafe characters: %q", got)
+	}
+}
+
+// Like git clone, new refuses a folder that already has something in it.
+func TestNewRefusesNonEmptyFolder(t *testing.T) {
+	dir := t.TempDir()
+	if err := emptyOrMissing(filepath.Join(dir, "missing")); err != nil {
+		t.Errorf("a missing folder: %v", err)
+	}
+	if err := emptyOrMissing(dir); err != nil {
+		t.Errorf("an empty folder: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, ".DS_Store"), nil, 0o644)
+	if err := emptyOrMissing(dir); err == nil || !strings.Contains(err.Error(), "not an empty folder") {
+		t.Errorf("a folder with a file in it: %v", err)
+	}
+	os.WriteFile(filepath.Join(dir, ".gd-sync"), nil, 0o644)
+	if err := emptyOrMissing(dir); err == nil || !strings.Contains(err.Error(), "gd-sync adopt") {
+		t.Errorf("an existing site should point to adopt: %v", err)
+	}
+}

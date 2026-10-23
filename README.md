@@ -75,8 +75,11 @@ folder and the GitHub repo name, so you just press enter.
 gd-sync new
 ```
 
-Asks for the domain, short name, local folder, GitHub repo, site type, and the
-SSH details. Then it creates the folder and repo, writes the config, installs
+Asks for the domain, the site's name, local folder, GitHub repo, site type and
+the SSH details. The name defaults to the full domain, and so do the folder and
+the repo: `wolfpackvision.com` → `~/Sites/wolfpackvision.com` and
+`you/wolfpackvision.com`. Like `git clone`, it refuses a folder that already
+has something in it. Then it creates the folder and repo, writes the config, installs
 the devcontainer and the three workflows, tests SSH, offers to install your SSH
 key, pulls the paths you maintain onto `main`, copies the rest of the live site
 into the folder, offers to pull the database, branches `develop`, creates the
@@ -85,7 +88,8 @@ GitHub repo and sets the deploy secrets.
 It asks which paths you maintain: the plugins and themes you write, e.g.
 `wp-content/plugins/acme-custom`. Leave it empty to start with none. You can
 add them later to `TRACKED` in `.gd-sync`; run `gd-sync scaffold` afterwards so
-`.gitignore` follows.
+`.gitignore` follows, and commit the files it now shows on `develop`. The
+server's copy lands on `main` at the next sync, and the two merge cleanly.
 
 Already have a folder with a `.gd-sync` in it — a clone on another computer, say?
 
@@ -185,7 +189,8 @@ SSH connection.
   your work. A local file is only deleted when the server no longer has it,
   gd-sync put it there, and it's unchanged since — that list lives in
   `.git/gd-sync/mirror`. Server logs (`error_log`, `*.log`) and
-  `wp-content/cache` are skipped. `--no-mirror` updates `main` only; the
+  `wp-content/cache` are skipped. Big downloads show a progress bar with
+  size, speed and time left. `--no-mirror` updates `main` only; the
   GitHub workers use it, and `gd-sync merge` skips the copy too.
 - **deploy** looks at what changed in `main` since the last commit known to be
   live — the last deploy, which is recorded on the server in `~/.gd-sync/`, or

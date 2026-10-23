@@ -53,7 +53,7 @@ func cmdDB(c *ctx) error {
 		}
 		return errors.New("Export produced an empty file")
 	}
-	ui.OK("%s -> _db/%s", humanSize(st.Size()), filepath.Base(dump))
+	ui.OK("%s -> _db/%s", ui.Size(st.Size()), filepath.Base(dump))
 	pruneDumps(dbDir, c.s.Name)
 
 	dc := filepath.Join(c.s.Repo, ".devcontainer", "docker-compose.yml")
@@ -90,18 +90,6 @@ func pruneDumps(dir, name string) {
 	}
 }
 
-func humanSize(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1fG", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1fM", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.1fK", float64(n)/(1<<10))
-	}
-	return fmt.Sprintf("%dB", n)
-}
-
 // running reports whether a compose service is up.
 func running(composeFile, service string) bool {
 	if _, err := exec.LookPath("docker"); err != nil {
@@ -121,13 +109,14 @@ func compose(c *ctx, args ...string) error {
 	return cmd.Run()
 }
 
-// cmdUp starts the devcontainer. The first time, it also runs the setup an
-// IDE would: import the newest dump, rewrite URLs, create the dev admin.
+// cmdUp starts the devcontainer. The first time — while the local database
+// is still empty — it also runs the setup an IDE would: import the newest
+// dump, rewrite URLs, create the dev admin.
 func cmdUp(c *ctx) error {
-	if err := compose(c, "up", "-d"); err != nil {
+	if err := compose(c, "up", "-d", "--build"); err != nil {
 		return err
 	}
-	if c.s.Type == "wordpress" && compose(c, "exec", "-T", "workspace", "wp", "--path=/var/www/html", "core", "is-installed") != nil {
+	if c.s.Type == "wordpress" && localDBEmpty(c) {
 		ui.Step("First start — setting up the local site")
 		if err := compose(c, "exec", "-T", "workspace", "bash", ".devcontainer/post-create.sh"); err != nil {
 			return err
@@ -135,6 +124,15 @@ func cmdUp(c *ctx) error {
 	}
 	ui.OK("%s is up — %s", c.s.Name, c.s.LocalURL)
 	return nil
+}
+
+// localDBEmpty reports whether the devcontainer's database has no tables.
+// When it can't tell, it says no, so a working database is never replaced.
+func localDBEmpty(c *ctx) bool {
+	dc := filepath.Join(c.s.Repo, ".devcontainer")
+	out, err := exec.Command("docker", "compose", "--env-file", filepath.Join(dc, ".env"), "-f", filepath.Join(dc, "docker-compose.yml"),
+		"exec", "-T", "db", "mariadb", "-uwordpress", "-pwordpress", "-N", "-e", "SHOW TABLES", "wordpress").Output()
+	return err == nil && strings.TrimSpace(string(out)) == ""
 }
 
 func cmdDown(c *ctx) error {

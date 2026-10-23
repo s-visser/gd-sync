@@ -5,7 +5,12 @@ FROM mcr.microsoft.com/devcontainers/php:8.3-bookworm
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get install -y --no-install-recommends \
         default-mysql-client less jq unzip \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && docker-php-ext-install mysqli
+
+# Xdebug stays installed for the IDE, but only starts when asked: otherwise
+# every wp-cli call tries to reach a debugger first.
+ENV XDEBUG_MODE=off
 
 # WP-CLI
 RUN curl -sSL -o /usr/local/bin/wp \

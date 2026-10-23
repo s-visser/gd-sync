@@ -173,7 +173,21 @@ func Devcontainer(s *site.Site) error {
 	if err != nil {
 		return err
 	}
-	return write(s, ".devcontainer/.env", fmt.Sprintf("COMPOSE_PROJECT_NAME=%s\nLIVE_URL=%s\nLOCAL_URL=%s\n", s.Name, s.LiveURL, s.LocalURL))
+	return write(s, ".devcontainer/.env", fmt.Sprintf("COMPOSE_PROJECT_NAME=%s\nLIVE_URL=%s\nLOCAL_URL=%s\n", composeName(s.Name), s.LiveURL, s.LocalURL))
+}
+
+// composeName is the site name as Docker Compose accepts a project name:
+// lowercase letters, digits, dashes and underscores. acme.nl becomes acme-nl.
+func composeName(name string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'A' && r <= 'Z':
+			return r + 'a' - 'A'
+		case r == '-' || r == '_' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z':
+			return r
+		}
+		return '-'
+	}, name)
 }
 
 // ToolVersion is the gd-sync version the workflows install: the version of

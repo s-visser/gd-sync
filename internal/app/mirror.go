@@ -50,12 +50,14 @@ func (c *ctx) mirror(conn *remote.Conn) error {
 
 	got := 0
 	if len(fetch) > 0 {
-		ui.Info("downloading %d file(s), %s", len(fetch), humanSize(server.Size(fetch)))
+		ui.Info("downloading %d file(s), %s", len(fetch), ui.Size(server.Size(fetch)))
 		wd, err := c.workDir()
 		if err != nil {
 			return err
 		}
-		fetched, err := transfer.Fetch(conn, c.s.RemoteRoot, fetch, wd)
+		progress := ui.NewProgress(server.Size(fetch), len(fetch))
+		fetched, err := transfer.Fetch(conn, c.s.RemoteRoot, fetch, wd, progress)
+		progress.Done()
 		if err != nil {
 			ui.Warn("Some files could not be fetched — they are skipped: %v", err)
 		}
