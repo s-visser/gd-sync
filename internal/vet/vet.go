@@ -16,6 +16,10 @@ import (
 // LargeBinary is the size from which a binary file is worth a question.
 const LargeBinary = 1 << 20
 
+// HeadSize is how much of each file Scan reads: enough to recognise a
+// credential.
+const HeadSize = 64 << 10
+
 // File is one file about to go into git.
 type File struct {
 	Path  string // slash-separated, relative to the web root
@@ -44,8 +48,10 @@ func (r Report) Empty() bool {
 
 // Scan checks the files. has reports whether a path exists in the repo or
 // among the files, and inGit whether git already holds anything under a
-// folder — a vendor folder git already keeps is left as it is.
-func Scan(files []File, has func(string) bool, inGit func(dir string) bool) Report {
+// folder — a vendor folder git already keeps is left as it is. read, which
+// may be nil, is called once per file with the bytes of it that Scan looks
+// at — min(Size, HeadSize) — so the calls add up to a known total.
+func Scan(files []File, has func(string) bool, inGit func(dir string) bool, read func(int64)) Report {
 	var r Report
 	vendors := map[string]*Vendor{}
 	var rest []File
@@ -57,6 +63,9 @@ func Scan(files []File, has func(string) bool, inGit func(dir string) bool) Repo
 				vendors[dir] = v
 			}
 			v.Files = append(v.Files, f.Path)
+			if read != nil {
+				read(min(f.Size, HeadSize)) // not read, but done with all the same
+			}
 			continue
 		}
 		rest = append(rest, f)
@@ -68,6 +77,9 @@ func Scan(files []File, has func(string) bool, inGit func(dir string) bool) Repo
 
 	for _, f := range rest {
 		head, binary := peek(f)
+		if read != nil {
+			read(min(f.Size, HeadSize))
+		}
 		switch {
 		case Credential(f.Path, head, binary):
 			r.Credentials = append(r.Credentials, f.Path)
@@ -102,7 +114,7 @@ func peek(f File) (head []byte, binary bool) {
 		return nil, false
 	}
 	defer fh.Close()
-	head, _ = io.ReadAll(io.LimitReader(fh, 64<<10))
+	head, _ = io.ReadAll(io.LimitReader(fh, HeadSize))
 	n := min(len(head), 8000)
 	return head, bytes.IndexByte(head[:n], 0) >= 0
 }

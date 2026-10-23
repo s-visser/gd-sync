@@ -22,9 +22,24 @@ const composerBuild = "composer install --no-dev --no-interaction --no-progress 
 // paths to leave out of this commit: those now kept out of git, and those
 // nobody was there to decide about, which wait for the next time someone is.
 func (c *ctx) vetFiles(files []vet.File, has func(string) bool, inGit func(string) bool) (map[string]bool, error) {
-	r := vet.Scan(files, has, inGit)
 	held := map[string]bool{}
+	if len(files) == 0 {
+		return held, nil
+	}
+	ui.Step("Checking what is about to go into git")
+	var total int64
+	for _, f := range files {
+		total += min(f.Size, vet.HeadSize)
+	}
+	ui.Info("looking for vendor folders, credentials and large binaries in %d file(s)", len(files))
+	progress := ui.NewProgress(total, len(files))
+	r := vet.Scan(files, has, inGit, func(n int64) {
+		progress.Add(n)
+		progress.File()
+	})
+	progress.Done()
 	if r.Empty() {
+		ui.OK("nothing to ask about")
 		return held, nil
 	}
 	changed, undecided := false, 0
@@ -33,7 +48,6 @@ func (c *ctx) vetFiles(files []vet.File, has func(string) bool, inGit func(strin
 			held[p] = true
 		}
 	}
-	ui.Step("Checking what is about to go into git")
 
 	for _, v := range r.Vendors {
 		keep := "Keep it out of git; the server's copy is left as it is"

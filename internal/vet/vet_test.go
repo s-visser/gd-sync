@@ -43,7 +43,7 @@ func TestScan(t *testing.T) {
 	for _, f := range files {
 		has[f.Path] = true
 	}
-	r := Scan(files, func(p string) bool { return has[p] }, func(d string) bool { return d == "wp-content/themes/kept/vendor" })
+	r := Scan(files, func(p string) bool { return has[p] }, func(d string) bool { return d == "wp-content/themes/kept/vendor" }, nil)
 
 	var vendors []string
 	for _, v := range r.Vendors {
