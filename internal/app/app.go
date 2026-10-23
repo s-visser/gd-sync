@@ -13,6 +13,7 @@ import (
 	"github.com/s-visser/gd-sync/internal/config"
 	"github.com/s-visser/gd-sync/internal/gitx"
 	"github.com/s-visser/gd-sync/internal/remote"
+	"github.com/s-visser/gd-sync/internal/scaffold"
 	"github.com/s-visser/gd-sync/internal/site"
 	"github.com/s-visser/gd-sync/internal/transfer"
 	"github.com/s-visser/gd-sync/internal/ui"
@@ -50,6 +51,9 @@ Add -y to answer yes to every question.`
 
 // Main runs gd-sync with the given arguments and returns the exit code.
 func Main(args []string) int {
+	if Version != "dev" {
+		scaffold.ToolVersion = "v" + strings.TrimPrefix(Version, "v")
+	}
 	if err := run(args); err != nil {
 		ui.Fail(err)
 		return 1

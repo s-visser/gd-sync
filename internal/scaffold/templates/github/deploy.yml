@@ -2,6 +2,11 @@ name: Deploy main to server
 
 # main IS the server. Anything that lands on main gets pushed live.
 # Commits made BY the sync worker are skipped — they already came from the server.
+#
+# It runs 'gd-sync deploy' — the same command as on your computer. It uploads
+# only what main changed since the last sync or deploy, deletes only files git
+# removed, and stops without touching anything if the server changed one of
+# those files in the meantime. Files it doesn't know about are never deleted.
 
 on:
   push:
@@ -18,9 +23,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
 
       - name: Load site manifest
-        run: cat .gd-sync >> "$GITHUB_ENV"
+        run: grep -E '^[A-Z_]+=' .gd-sync >> "$GITHUB_ENV"
 
       - name: Set up Node
         if: env.BUILD_CMD != ''
@@ -33,51 +41,37 @@ jobs:
         if: env.BUILD_CMD != ''
         run: ${{ env.BUILD_CMD }}
 
-      - name: Authorise SSH
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install gd-sync
+        env:
+          TOKEN: ${{ secrets.GD_SYNC_INSTALL_TOKEN }}
+        run: |
+          # A token is only needed while the gd-sync repository is private.
+          if [ -n "$TOKEN" ]; then
+            export GOPRIVATE=github.com/s-visser/gd-sync GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/s-visser/gd-sync.insteadOf"
+            export GIT_CONFIG_VALUE_0="https://github.com/s-visser/gd-sync"
+          fi
+          go install github.com/s-visser/gd-sync/cmd/gd-sync@__GD_SYNC_VERSION__
+
+      - name: Connection details
         env:
           SSH_KEY: ${{ secrets.GD_SYNC_SSH_KEY }}
           SSH_HOST: ${{ secrets.GD_SYNC_SSH_HOST }}
+          SSH_USER: ${{ secrets.GD_SYNC_SSH_USER }}
+          SSH_PORT: ${{ secrets.GD_SYNC_SSH_PORT }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${{ secrets.GD_SYNC_SSH_PORT || 22 }}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'SSH_HOST=%s\nSSH_USER=%s\nSSH_PORT=%s\n' "$SSH_HOST" "$SSH_USER" "${SSH_PORT:-22}" > .gd-sync.local
 
-      - name: Back up the current server files
-        env:
-          T: ${{ secrets.GD_SYNC_SSH_USER }}@${{ secrets.GD_SYNC_SSH_HOST }}
-          P: ${{ secrets.GD_SYNC_SSH_PORT || 22 }}
-        run: |
-          STAMP=$(date +%Y%m%d-%H%M%S)
-          ssh -p "$P" "$T" "mkdir -p ~/gd-sync-backups && cd '$REMOTE_ROOT' && \
-            tar czf ~/gd-sync-backups/deploy-$STAMP.tar.gz $TRACKED 2>/dev/null || true; \
-            ls -1t ~/gd-sync-backups/*.tar.gz 2>/dev/null | tail -n +21 | xargs -r rm --"
-          echo "Backup: ~/gd-sync-backups/deploy-$STAMP.tar.gz"
-
-      - name: Upload
-        env:
-          T: ${{ secrets.GD_SYNC_SSH_USER }}@${{ secrets.GD_SYNC_SSH_HOST }}
-          P: ${{ secrets.GD_SYNC_SSH_PORT || 22 }}
-        run: |
-          set -eu
-          RSH="ssh -p $P -o StrictHostKeyChecking=accept-new"
-          COMMON="-az --delete --no-perms --no-owner --no-group --omit-dir-times
-                  --exclude .git --exclude .github --exclude .devcontainer
-                  --exclude .gd-sync --exclude .idea --exclude .run
-                  --exclude node_modules --exclude _db --exclude .DS_Store"
-
-          if [ -n "${PUBLISH_DIR:-}" ]; then
-            # static build: ship the build output into the web root
-            rsync $COMMON -e "$RSH" "$PUBLISH_DIR/" "$T:$REMOTE_ROOT/"
-          else
-            for p in $TRACKED; do
-              [ -e "$p" ] || { echo "skip $p (not in repo)"; continue; }
-              if [ -d "$p" ]; then src="$p/"; dst="$REMOTE_ROOT/$p/"
-              else src="$p"; dst="$REMOTE_ROOT/$p"; fi
-              echo "-> $p"
-              rsync $COMMON -e "$RSH" "$src" "$T:$dst"
-            done
-          fi
+      - name: Deploy
+        run: gd-sync deploy -y
 
       - name: Summary
         run: echo "Deployed ${{ github.sha }} to $REMOTE_ROOT" >> "$GITHUB_STEP_SUMMARY"

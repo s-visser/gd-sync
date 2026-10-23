@@ -197,7 +197,7 @@ func TestSyncStatusDeploy(t *testing.T) {
 	w.write(w.server, "wp-content/themes/t/style.css", "body{color:green}\n")
 	w.write(w.repo, "wp-content/themes/t/style.css", "body{color:pink}\n")
 	w.git("commit", "-qam", "pink")
-	if err := w.gd("deploy"); err == nil || !strings.Contains(err.Error(), "changed these since your last sync") {
+	if err := w.gd("deploy"); err == nil || !strings.Contains(err.Error(), "The server changed these") {
 		t.Errorf("deploy over a server edit: err = %v", err)
 	}
 	if got := w.read(w.server, "wp-content/themes/t/style.css"); got != "body{color:green}\n" {
@@ -264,13 +264,50 @@ func TestMerge(t *testing.T) {
 	}
 }
 
-func TestDeployNeedsSync(t *testing.T) {
+// A GitHub runner has a fresh clone: no local state at all. Deploy must work
+// from git history and the record on the server alone.
+func TestDeployFromFreshClone(t *testing.T) {
 	w := newWorld(t, "wordpress", "wp-content", "")
-	w.write(w.repo, "wp-content/a.php", "a")
+	w.write(w.server, "wp-content/a.php", "a1\n")
+	w.write(w.server, "wp-content/b.php", "b1\n")
+	w.mustGD("sync")
+
+	w.write(w.repo, "wp-content/a.php", "a2\n")
+	w.git("commit", "-qam", "a2")
+	w.mustGD("deploy")
+
+	os.RemoveAll(filepath.Join(w.repo, ".git", "gd-sync"))
+	w.write(w.repo, "wp-content/a.php", "a3\n")
+	w.git("rm", "-q", "wp-content/b.php")
+	w.git("commit", "-qam", "a3, drop b")
+	w.mustGD("deploy")
+	if got := w.read(w.server, "wp-content/a.php"); got != "a3\n" {
+		t.Errorf("server a.php = %q", got)
+	}
+	if w.read(w.server, "wp-content/b.php") != "<missing>" {
+		t.Error("b.php should be removed from the server")
+	}
+}
+
+// Without any sync or deploy, nothing on the server is ever overwritten or
+// deleted unseen.
+func TestDeployNeverTouchesUnknownFiles(t *testing.T) {
+	w := newWorld(t, "wordpress", "wp-content", "")
+	w.write(w.server, "wp-content/theirs.php", "live edit\n")
+	w.write(w.server, "wp-content/stranger.php", "not in git\n")
+	w.write(w.repo, "wp-content/theirs.php", "my version\n")
+	w.write(w.repo, "wp-content/mine.php", "new\n")
 	w.git("add", "-A")
-	w.git("commit", "-qm", "a")
-	if err := w.gd("deploy"); err == nil || !strings.Contains(err.Error(), "never synced") {
-		t.Errorf("deploy without a sync: err = %v", err)
+	w.git("commit", "-qm", "local work")
+
+	if err := w.gd("deploy"); err == nil || !strings.Contains(err.Error(), "The server changed these") {
+		t.Fatalf("deploy over an unknown server file: err = %v", err)
+	}
+	if w.read(w.server, "wp-content/theirs.php") != "live edit\n" || w.read(w.server, "wp-content/stranger.php") != "not in git\n" {
+		t.Error("server files were touched")
+	}
+	if w.read(w.server, "wp-content/mine.php") != "<missing>" {
+		t.Error("a refused deploy still uploaded something")
 	}
 }
 

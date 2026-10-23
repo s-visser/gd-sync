@@ -89,7 +89,7 @@ It asks only for the connection details, which are deliberately not committed.
 
 ## Day to day
 
-Run these from anywhere inside a site folder. No site name, ever.
+Run these from anywhere inside a site folder.
 
 ```bash
 gd-sync sync       # main := the live server
@@ -134,9 +134,10 @@ something to walk. Delete it and nothing breaks; `gd-sync adopt` rebuilds entrie
    `[server-sync] …`. It also runs nightly in GitHub Actions, so `main` stays
    honest even if nobody touches the repo for a year.
 
-2. **Push to `main` → deploy worker.** `deploy.yml` backs up the server, then
-   rsyncs `main` up. Commits tagged `[server-sync]` are skipped, so a sync can't
-   trigger a pointless redeploy of what just came down.
+2. **Push to `main` → deploy worker.** `deploy.yml` runs `gd-sync deploy`: it
+   backs up the server, then ships what `main` changed. Commits tagged
+   `[server-sync]` are skipped, so a sync can't trigger a pointless redeploy of
+   what just came down.
 
 3. **`gd-sync merge`** is the only sanctioned route into `main`: server first, then
    your branch, then push. If the server changed under you, you get a normal Git
@@ -156,14 +157,23 @@ SSH connection.
   sync, hash them, and compare with `main`, so a file that was touched but not
   changed never shows up. What the server held is remembered per machine in
   `.git/gd-sync/server`.
-- **deploy** ships exactly what changed in `main` since then, straight from git
-  (so the working tree can't leak into it), and removes what
-  `main` deleted. If any of those files changed on the server in the meantime,
-  it refuses and tells you to run `gd-sync merge`. It never deletes a file it
-  didn't know about.
-- On a machine that has never synced a site, run `gd-sync sync` before deploying.
+- **deploy** looks at what changed in `main` since the last commit known to be
+  live — the last deploy, which is recorded on the server in `~/.gd-sync/`, or
+  the last `[server-sync]` snapshot. For each of those files it checks what the
+  server holds right now:
+  - still the old version: upload the new one, or delete it if `main` did;
+  - already the new version: nothing to do;
+  - anything else: someone changed it on the server. The deploy stops before
+    touching anything and tells you to run `gd-sync merge`.
 
-The GitHub workers still use rsync; Ubuntu runners have it.
+  Files go up straight from git, so the working tree can't leak into a deploy.
+  A file gd-sync never put on the server is never deleted, and there is no
+  `rsync --delete` anywhere. Because the record lives on the server, a deploy
+  works the same from any computer and from a fresh GitHub runner.
+- **Astro** deploys upload the whole build, and remove only files that an
+  earlier deploy uploaded and the new build no longer has.
+
+The GitHub workers run the same gd-sync commands, so they follow the same rules.
 
 ---
 
@@ -213,6 +223,10 @@ authorised on the server.
 Without these the workers can't reach GoDaddy, and you fall back to `gd-sync deploy`
 from your computer, which works fine.
 
+The workers install gd-sync with `go install`. While the gd-sync repository is
+private, also add a `GD_SYNC_INSTALL_TOKEN` secret: a fine-grained token with
+read access to the gd-sync repository's contents.
+
 ---
 
 ## Deliberate omissions
@@ -229,9 +243,9 @@ large, it changes through the admin, and it isn't code.
 ## Backups
 
 Every deploy — worker or manual — tars the current server copy to
-`~/gd-sync-backups/` on the server first. The worker keeps the last 20.
+`~/gd-sync-backups/` on the server first, keeping the last 20 per site.
 
 ```bash
 gd-sync shell
-cd ~/public_html && tar xzf ~/gd-sync-backups/deploy-20261022-143000.tar.gz
+cd ~/public_html && tar xzf ~/gd-sync-backups/<site>-20261022-143000.tar.gz
 ```

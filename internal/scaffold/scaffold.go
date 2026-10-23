@@ -128,13 +128,18 @@ func replaceLine(content, marker, repl string) string {
 	return strings.Join(lines, "")
 }
 
+// ToolVersion is the gd-sync version the workflows install: the version of
+// the gd-sync that wrote them, so workers and your computer behave the same.
+var ToolVersion = "latest"
+
 func Workflows(s *site.Site) error {
 	for _, name := range []string{"deploy.yml", "sync-from-server.yml", "verify-main.yml"} {
 		b, err := fs.ReadFile(templates(), "github/"+name)
 		if err != nil {
 			return err
 		}
-		if err := write(s, ".github/workflows/"+name, string(b)); err != nil {
+		content := strings.ReplaceAll(string(b), "__GD_SYNC_VERSION__", ToolVersion)
+		if err := write(s, ".github/workflows/"+name, content); err != nil {
 			return err
 		}
 	}

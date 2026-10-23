@@ -1,7 +1,7 @@
 name: ${COMPOSE_PROJECT_NAME:-gd-sync-site}
 
 services:
-  # The container JetBrains / VS Code attaches to. Has wp-cli, php, node, rsync.
+  # The container JetBrains / VS Code attaches to. Has wp-cli, php and node.
   workspace:
     build:
       context: .

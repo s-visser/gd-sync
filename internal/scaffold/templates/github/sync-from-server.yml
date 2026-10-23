@@ -3,6 +3,9 @@ name: Sync server into main
 # Pulls the live server's files onto main. This is what keeps main honest when
 # someone edits via cPanel, or a WordPress update rewrites a tracked file.
 # Runs nightly, on demand, and automatically before any PR merge (see verify-main).
+#
+# It runs 'gd-sync sync' — the same command as on your computer, with the same
+# excludes. It only ever writes to this repo, never to the server.
 
 on:
   schedule:
@@ -25,64 +28,59 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     outputs:
-      changed: ${{ steps.commit.outputs.changed }}
+      changed: ${{ steps.sync.outputs.changed }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
-      - name: Load site manifest
-        run: cat .gd-sync >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
 
-      - name: Authorise SSH
+      - name: Install gd-sync
+        env:
+          TOKEN: ${{ secrets.GD_SYNC_INSTALL_TOKEN }}
+        run: |
+          # A token is only needed while the gd-sync repository is private.
+          if [ -n "$TOKEN" ]; then
+            export GOPRIVATE=github.com/s-visser/gd-sync GIT_CONFIG_COUNT=1
+            export GIT_CONFIG_KEY_0="url.https://x-access-token:${TOKEN}@github.com/s-visser/gd-sync.insteadOf"
+            export GIT_CONFIG_VALUE_0="https://github.com/s-visser/gd-sync"
+          fi
+          go install github.com/s-visser/gd-sync/cmd/gd-sync@__GD_SYNC_VERSION__
+
+      - name: Connection details
         env:
           SSH_KEY: ${{ secrets.GD_SYNC_SSH_KEY }}
           SSH_HOST: ${{ secrets.GD_SYNC_SSH_HOST }}
+          SSH_USER: ${{ secrets.GD_SYNC_SSH_USER }}
+          SSH_PORT: ${{ secrets.GD_SYNC_SSH_PORT }}
         run: |
           mkdir -p ~/.ssh && chmod 700 ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -p "${{ secrets.GD_SYNC_SSH_PORT || 22 }}" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          printf 'SSH_HOST=%s\nSSH_USER=%s\nSSH_PORT=%s\n' "$SSH_HOST" "$SSH_USER" "${SSH_PORT:-22}" > .gd-sync.local
 
-      - name: Download tracked paths from the server
-        env:
-          T: ${{ secrets.GD_SYNC_SSH_USER }}@${{ secrets.GD_SYNC_SSH_HOST }}
-          P: ${{ secrets.GD_SYNC_SSH_PORT || 22 }}
+      # What the server held last night, so only files that changed since are
+      # downloaded. Losing it is harmless: the next sync just downloads more.
+      - uses: actions/cache@v4
+        with:
+          path: .git/gd-sync/server
+          key: gd-sync-state-${{ github.run_id }}
+          restore-keys: gd-sync-state-
+
+      - name: Sync
+        id: sync
         run: |
-          set -eu
-          RSH="ssh -p $P -o StrictHostKeyChecking=accept-new"
-          COMMON="-az --delete --no-perms --no-owner --no-group --omit-dir-times
-                  --exclude .git --exclude .DS_Store --exclude node_modules
-                  --exclude '*.log' --exclude wp-content/cache"
-
-          if [ -n "${PUBLISH_DIR:-}" ]; then
-            echo "Static site — source lives in this repo, nothing to pull back."
-            exit 0
-          fi
-
-          for p in $TRACKED; do
-            if ssh -p "$P" "$T" "test -d '$REMOTE_ROOT/$p'"; then
-              mkdir -p "$p"; src="$REMOTE_ROOT/$p/"
-            else
-              mkdir -p "$(dirname "$p")"; src="$REMOTE_ROOT/$p"
-            fi
-            echo "<- $p"
-            rsync $COMMON -e "$RSH" "$T:$src" "$p"
-          done
-
-      - name: Commit any drift
-        id: commit
-        run: |
-          git config user.name  "gd-sync"
-          git config user.email "gd-sync@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
+          before=$(git rev-parse HEAD)
+          gd-sync sync -y
+          if [ "$(git rev-parse HEAD)" = "$before" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "main already matches the server." >> "$GITHUB_STEP_SUMMARY"
           else
-            git commit -m "[server-sync] Live server state $(date -u '+%Y-%m-%d %H:%M UTC')"
-            git push origin main
             echo "changed=true" >> "$GITHUB_OUTPUT"
             {
               echo "### Server drift pulled into main"

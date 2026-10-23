@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"fmt"
 	"sort"
 
 	"github.com/s-visser/gd-sync/internal/gitx"
@@ -91,56 +92,77 @@ func PullPlan(known State, main Tree, server Manifest) (fetch, gone []string) {
 	return fetch, gone
 }
 
-// DeployPlan decides what a deploy of main does to the server: upload what
-// main changed since the last known state, delete what main removed. Drift
-// lists the files among those that the server changed in the meantime —
-// deploying them would overwrite someone's edit, so the deploy must stop.
-// Files gd-sync never knew about are never deleted.
-func DeployPlan(known State, server Manifest, main Tree) (up, del, drift []string) {
-	for p, b := range main {
-		k, seen := known[p]
-		if seen && k.Blob == b.ID {
-			continue
-		}
-		up = append(up, p)
-		f, onServer := server[p]
-		if onServer != seen || (onServer && (f.Size != k.Size || f.Mtime != k.Mtime)) {
+// DeployPlan decides what a deploy does, file by file, for every path whose
+// content differs between base — the last commit known to be live — and main.
+// server holds the blob each of those paths has on the server right now, or
+// "" when it isn't there.
+//
+//   - The server already has main's version: nothing to do.
+//   - The server still has base's version: upload main's, or delete the file
+//     if main removed it.
+//   - Anything else means the server changed since base. Deploying would
+//     overwrite that, so the path is drift and the deploy must stop.
+//
+// A file gd-sync never put there is never deleted: it isn't in base, so it
+// can only be drift.
+func DeployPlan(base, main Tree, server map[string]string) (up, del, drift []string) {
+	for _, p := range ChangedPaths(base, main) {
+		want, was, have := main[p].ID, base[p].ID, server[p]
+		switch {
+		case have == want:
+		case have == was && want != "":
+			up = append(up, p)
+		case have == was:
+			del = append(del, p)
+		default:
 			drift = append(drift, p)
 		}
 	}
-	for p, k := range known {
-		f, onServer := server[p]
-		if _, inMain := main[p]; inMain || !onServer {
-			continue
-		}
-		del = append(del, p)
-		if f.Size != k.Size || f.Mtime != k.Mtime {
-			drift = append(drift, p)
-		}
-	}
-	sort.Strings(up)
-	sort.Strings(del)
-	sort.Strings(drift)
 	return up, del, drift
 }
 
-// AfterDeploy is the state once a deploy went through: uploaded files carry
-// main's blob at whatever size and mtime the server gave them, and other
-// files keep their known state while the server still agrees.
-func AfterDeploy(known State, server Manifest, main Tree, uploaded []string) State {
-	up := map[string]bool{}
-	for _, p := range uploaded {
-		up[p] = true
-	}
-	s := State{}
-	for p, f := range server {
-		if up[p] {
-			s[p] = Known{f.Size, f.Mtime, main[p].ID}
-		} else if k, ok := known[p]; ok && k.Size == f.Size && k.Mtime == f.Mtime {
-			s[p] = k
+// ChangedPaths lists the paths whose content differs between two trees.
+func ChangedPaths(a, b Tree) []string {
+	var out []string
+	for p, x := range a {
+		if b[p].ID != x.ID {
+			out = append(out, p)
 		}
 	}
-	return s
+	for p := range b {
+		if _, ok := a[p]; !ok {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ServerBlobs fetches the server's copy of each path that it has and returns
+// their blob ids. Paths the server doesn't have are left out.
+func ServerBlobs(conn *remote.Conn, root string, paths []string, server Manifest, workDir string) (map[string]string, error) {
+	var present []string
+	for _, p := range paths {
+		if _, ok := server[p]; ok {
+			present = append(present, p)
+		}
+	}
+	blobs := map[string]string{}
+	if len(present) == 0 {
+		return blobs, nil
+	}
+	got, err := Fetch(conn, root, present, workDir)
+	for _, p := range present {
+		f, ok := got[p]
+		if !ok {
+			if err == nil {
+				err = fmt.Errorf("the server's %s could not be read", p)
+			}
+			return nil, err
+		}
+		blobs[p] = f.Blob
+	}
+	return blobs, nil
 }
 
 func concat(lists ...[]string) []string {

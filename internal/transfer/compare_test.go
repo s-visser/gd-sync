@@ -40,45 +40,40 @@ func TestPullPlanWithoutState(t *testing.T) {
 }
 
 func TestDeployPlan(t *testing.T) {
-	known := State{
-		"unchanged":     {1, 1, "a"},
-		"edited":        {1, 1, "b"},
-		"edited-both":   {1, 1, "c"}, // main and server both changed it
-		"removed":       {1, 1, "d"},
-		"removed-moved": {1, 1, "e"}, // main removed it, server changed it
-		"server-gone":   {1, 1, "f"}, // main changed it, server deleted it
-		"already-gone":  {1, 1, "g"}, // main removed it, so did the server
-	}
-	server := Manifest{
-		"unchanged": {1, 1}, "edited": {1, 1}, "edited-both": {2, 2},
-		"removed": {1, 1}, "removed-moved": {1, 2}, "unknown": {5, 5}, "stranger": {9, 9},
+	base := Tree{
+		"edited": {ID: "a"}, "removed": {ID: "b"}, "both-edited": {ID: "c"},
+		"removed-but-edited-live": {ID: "d"}, "already-live": {ID: "e"},
+		"deleted-live": {ID: "f"}, "untouched": {ID: "g"},
 	}
 	main := Tree{
-		"unchanged": {ID: "a"}, "edited": {ID: "b2"}, "edited-both": {ID: "c2"},
-		"server-gone": {ID: "f2"}, "new": {ID: "h"}, "unknown": {ID: "i"},
+		"edited": {ID: "a2"}, "both-edited": {ID: "c2"}, "already-live": {ID: "e2"},
+		"deleted-live": {ID: "f2"}, "untouched": {ID: "g"},
+		"new": {ID: "h"}, "new-but-exists-live": {ID: "i"},
 	}
-	up, del, drift := DeployPlan(known, server, main)
-	if want := []string{"edited", "edited-both", "new", "server-gone", "unknown"}; !slices.Equal(up, want) {
+	// What the server holds now, for the paths that differ between base and main.
+	server := map[string]string{
+		"edited": "a", "removed": "b", "both-edited": "c-live",
+		"removed-but-edited-live": "d-live", "already-live": "e2",
+		"new-but-exists-live": "someone-elses",
+	}
+	up, del, drift := DeployPlan(base, main, server)
+	if want := []string{"edited", "new"}; !slices.Equal(up, want) {
 		t.Errorf("up = %v, want %v", up, want)
 	}
-	if want := []string{"removed", "removed-moved"}; !slices.Equal(del, want) {
-		t.Errorf("del = %v, want %v (never a file gd-sync didn't know)", del, want)
+	if want := []string{"removed"}; !slices.Equal(del, want) {
+		t.Errorf("del = %v, want %v", del, want)
 	}
-	if want := []string{"edited-both", "removed-moved", "server-gone", "unknown"}; !slices.Equal(drift, want) {
+	if want := []string{"both-edited", "deleted-live", "new-but-exists-live", "removed-but-edited-live"}; !slices.Equal(drift, want) {
 		t.Errorf("drift = %v, want %v", drift, want)
 	}
 }
 
-func TestAfterDeploy(t *testing.T) {
-	known := State{"kept": {1, 1, "a"}, "moved": {1, 1, "b"}, "up": {1, 1, "c"}}
-	server := Manifest{"kept": {1, 1}, "moved": {1, 9}, "up": {3, 7}}
-	main := Tree{"kept": {ID: "a"}, "moved": {ID: "b"}, "up": {ID: "c2"}}
-	s := AfterDeploy(known, server, main, []string{"up"})
-	if s["up"] != (Known{3, 7, "c2"}) || s["kept"] != (Known{1, 1, "a"}) {
-		t.Errorf("unexpected state %v", s)
-	}
-	if _, ok := s["moved"]; ok {
-		t.Error("a file the server changed must drop out of the state")
+func TestDeployPlanFromNothing(t *testing.T) {
+	// No sync and no deploy yet: everything in main is new, nothing is deleted,
+	// and a file already on the server is never overwritten unseen.
+	up, del, drift := DeployPlan(Tree{}, Tree{"a": {ID: "1"}, "b": {ID: "2"}}, map[string]string{"b": "other"})
+	if !slices.Equal(up, []string{"a"}) || len(del) != 0 || !slices.Equal(drift, []string{"b"}) {
+		t.Errorf("up %v, del %v, drift %v", up, del, drift)
 	}
 }
 

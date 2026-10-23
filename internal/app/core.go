@@ -228,59 +228,65 @@ func cmdDeploy(c *ctx) error {
 	return c.deployMain(conn)
 }
 
-// deployMain ships what changed in main since the server was last seen, and
-// refuses when the server itself moved since then: main mirrors the server,
-// never the other way round.
+// deployMain ships what changed in main since the last commit known to be
+// live, checking each file against what the server holds right now. It needs
+// no memory of earlier runs, so it works the same from your computer and from
+// a fresh GitHub runner.
 func (c *ctx) deployMain(conn *remote.Conn) error {
-	statePath, err := transfer.StatePath(c.git)
-	if err != nil {
-		return err
-	}
-	if _, err := os.Stat(statePath); err != nil {
-		return fmt.Errorf(`This machine has never synced %s, so it can't tell what the server holds.
-  Run 'gd-sync sync' first.`, c.s.Name)
-	}
-	known, err := transfer.LoadState(statePath)
-	if err != nil {
-		return err
-	}
-
 	ui.Step("Deploying %s  [main -> server]", c.s.Name)
 	m := c.matcher(c.s.Tracked)
-	server, err := transfer.ListRemote(conn, c.s.RemoteRoot, m)
+	base, err := c.deployBase(conn)
 	if err != nil {
 		return err
 	}
-	if err := transfer.DropIgnored(c.git, server); err != nil {
+	baseTree, err := transfer.TreeAt(c.git, base, m)
+	if err != nil {
 		return err
 	}
 	main, err := transfer.MainTree(c.git, m)
 	if err != nil {
 		return err
 	}
+	changed := transfer.ChangedPaths(baseTree, main)
+	if len(changed) == 0 {
+		ui.OK("Server already matches main — nothing to deploy")
+		return c.recordDeployed(conn)
+	}
 
-	up, del, drift := transfer.DeployPlan(known, server, main)
+	server, err := transfer.ListRemote(conn, c.s.RemoteRoot, m)
+	if err != nil {
+		return err
+	}
+	wd, err := c.workDir()
+	if err != nil {
+		return err
+	}
+	blobs, err := transfer.ServerBlobs(conn, c.s.RemoteRoot, changed, server, wd)
+	if err != nil {
+		return err
+	}
+	up, del, drift := transfer.DeployPlan(baseTree, main, blobs)
 	if len(drift) > 0 {
 		ui.List("", "", drift)
-		return errors.New(`The server changed these since your last sync. Deploying would overwrite that.
+		return errors.New(`The server changed these since they were last synced or deployed. Deploying would overwrite that.
   Run 'gd-sync merge' to fold the server's changes in and deploy in one go.`)
 	}
 	if len(up)+len(del) == 0 {
 		ui.OK("Server already matches main — nothing to deploy")
-		return nil
+		return c.recordDeployed(conn)
 	}
 
 	ui.Say("")
-	var added, changed []string
+	var added, modified []string
 	for _, p := range up {
-		if _, ok := server[p]; ok {
-			changed = append(changed, p)
+		if _, ok := blobs[p]; ok {
+			modified = append(modified, p)
 		} else {
 			added = append(added, p)
 		}
 	}
 	ui.List(ui.G, "+ ", added)
-	ui.List(ui.Y, "~ ", changed)
+	ui.List(ui.Y, "~ ", modified)
 	ui.List(ui.R, "- ", del)
 	ui.Say("")
 	if !ui.Confirm("Push these to the LIVE site?") {
@@ -296,21 +302,85 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 	if err := transfer.RemoveRemote(conn, c.s.RemoteRoot, del); err != nil {
 		return err
 	}
-
-	after, err := transfer.ListRemote(conn, c.s.RemoteRoot, m)
-	if err != nil {
+	if err := c.recordDeployed(conn); err != nil {
 		return err
 	}
-	if err := transfer.AfterDeploy(known, after, main, up).Save(statePath); err != nil {
-		return err
-	}
+	c.forget(append(up, del...))
 	ui.OK("Deployed")
 	return nil
 }
 
+// deployBase is the most recent commit known to match the server: the last
+// deploy (recorded on the server itself) or the last [server-sync] snapshot,
+// whichever came later in main's history. With neither, it's an empty tree,
+// so every file in main counts as new and nothing is ever deleted.
+func (c *ctx) deployBase(conn *remote.Conn) (string, error) {
+	isCommit := func(ref string) bool { return ref != "" && c.git.OK("cat-file", "-e", ref+"^{commit}") }
+
+	deployed := ""
+	if out, err := conn.Output("cat "+c.serverRecord("deployed")+" 2>/dev/null || true", nil); err == nil {
+		if sha := strings.TrimSpace(string(out)); isCommit(sha) && c.git.OK("merge-base", "--is-ancestor", sha, "main") {
+			deployed = sha
+		}
+	}
+	synced, _ := c.git.Output("log", "-1", "--first-parent", "--format=%H", "--fixed-strings", "--grep=[server-sync]", "main")
+	if synced = strings.TrimSpace(synced); !isCommit(synced) {
+		synced = ""
+	}
+
+	switch {
+	case deployed == "":
+		return synced, nil
+	case synced == "" || c.git.OK("merge-base", "--is-ancestor", synced, deployed):
+		return deployed, nil
+	}
+	return synced, nil
+}
+
+// serverRecord is a file in ~/.gd-sync/<site>/ on the server, where gd-sync
+// keeps what every machine and every worker needs to agree on.
+func (c *ctx) serverRecord(name string) string {
+	return "~/.gd-sync/" + remote.Quote(c.s.Name) + "/" + name
+}
+
+func (c *ctx) writeServerRecord(conn *remote.Conn, name, content string) error {
+	cmd := "mkdir -p ~/.gd-sync/" + remote.Quote(c.s.Name) + " && cat > " + c.serverRecord(name)
+	if err := conn.Run(cmd, strings.NewReader(content), nil); err != nil {
+		return fmt.Errorf("Could not record the deploy on the server: %w", err)
+	}
+	return nil
+}
+
+func (c *ctx) recordDeployed(conn *remote.Conn) error {
+	sha, err := c.git.Output("rev-parse", "main")
+	if err != nil {
+		return err
+	}
+	return c.writeServerRecord(conn, "deployed", sha)
+}
+
+// forget drops paths from the local sync state, so the next sync looks at
+// them again rather than trusting what it knew before the deploy.
+func (c *ctx) forget(paths []string) {
+	statePath, err := transfer.StatePath(c.git)
+	if err != nil {
+		return
+	}
+	known, err := transfer.LoadState(statePath)
+	if err != nil || len(known) == 0 {
+		return
+	}
+	for _, p := range paths {
+		delete(known, p)
+	}
+	_ = known.Save(statePath)
+}
+
 // deployBuild ships a static build. It isn't in git, so the whole build goes
-// up each time. Files from the previous deploy that the new build no longer
-// has are removed; anything else on the server is left alone.
+// up each time. Files the previous deploy put there that the new build no
+// longer has are removed; anything else on the server is left alone. The
+// list of deployed files lives on the server, so every machine and worker
+// sees the same one.
 func (c *ctx) deployBuild(conn *remote.Conn) error {
 	dir := filepath.Join(c.s.Repo, filepath.FromSlash(c.s.PublishDir))
 	if _, err := os.Stat(dir); err != nil {
@@ -324,22 +394,20 @@ func (c *ctx) deployBuild(conn *remote.Conn) error {
 	if len(up) == 0 {
 		return fmt.Errorf("%s is empty — run the build first", c.s.PublishDir)
 	}
+	sort.Strings(up)
 
-	gd, err := c.git.GitDir()
+	prev, err := conn.Output("cat "+c.serverRecord("published")+" 2>/dev/null || true", nil)
 	if err != nil {
 		return err
 	}
-	prevPath := filepath.Join(gd, "gd-sync", "published")
+	now := map[string]bool{}
+	for _, p := range up {
+		now[p] = true
+	}
 	var del []string
-	if b, err := os.ReadFile(prevPath); err == nil {
-		now := map[string]bool{}
-		for _, p := range up {
-			now[p] = true
-		}
-		for _, p := range strings.Split(string(b), "\n") {
-			if p != "" && !now[p] {
-				del = append(del, p)
-			}
+	for _, p := range strings.Split(string(prev), "\n") {
+		if p != "" && !now[p] {
+			del = append(del, p)
 		}
 	}
 
@@ -360,18 +428,15 @@ func (c *ctx) deployBuild(conn *remote.Conn) error {
 	if err := transfer.RemoveRemote(conn, c.s.RemoteRoot, del); err != nil {
 		return err
 	}
-	sort.Strings(up)
-	if err := os.MkdirAll(filepath.Dir(prevPath), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(prevPath, []byte(strings.Join(up, "\n")+"\n"), 0o644); err != nil {
+	if err := c.writeServerRecord(conn, "published", strings.Join(up, "\n")+"\n"); err != nil {
 		return err
 	}
 	ui.OK("Deployed")
 	return nil
 }
 
-// backup tars the server's current files into ~/gd-sync-backups first.
+// backup tars the server's current files into ~/gd-sync-backups first,
+// keeping the newest 20 for this site.
 func (c *ctx) backup(conn *remote.Conn) {
 	ui.Step("Backing up the server's current files")
 	name := fmt.Sprintf("~/gd-sync-backups/%s-%s.tar.gz", c.s.Name, stamp("20060102-150405"))
@@ -385,4 +450,6 @@ func (c *ctx) backup(conn *remote.Conn) {
 		return
 	}
 	ui.OK("%s", name)
+	prune := fmt.Sprintf("ls -1t ~/gd-sync-backups/%s-*.tar.gz 2>/dev/null | tail -n +21 | while IFS= read -r f; do rm -f -- \"$f\"; done", c.s.Name)
+	_ = conn.Run(prune, nil, nil)
 }

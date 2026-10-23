@@ -49,7 +49,13 @@ func TestAllWordPress(t *testing.T) {
 		t.Error("README not written for the domain")
 	}
 	for _, f := range []string{"deploy.yml", "sync-from-server.yml", "verify-main.yml"} {
-		read(".github/workflows/" + f)
+		wf := read(".github/workflows/" + f)
+		if strings.Contains(wf, "__GD_SYNC_VERSION__") || strings.Contains(wf, "rsync") {
+			t.Errorf("%s: version placeholder left, or still uses rsync", f)
+		}
+	}
+	if !strings.Contains(read(".github/workflows/deploy.yml"), "gd-sync/cmd/gd-sync@latest") {
+		t.Error("deploy.yml doesn't install gd-sync")
 	}
 	if !strings.Contains(read(".run/1_Sync_main_from_server.run.xml"), `value="gd-sync sync"`) {
 		t.Error("run configuration doesn't call gd-sync")

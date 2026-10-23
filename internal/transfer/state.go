@@ -76,12 +76,19 @@ func DropIgnored(repo gitx.Repo, man Manifest) error {
 }
 
 // MainTree lists main's files that belong to the transfer.
-func MainTree(repo gitx.Repo, m Matcher) (Tree, error) {
-	out, err := repo.Output("ls-tree", "-r", "-z", "main")
+func MainTree(repo gitx.Repo, m Matcher) (Tree, error) { return TreeAt(repo, "main", m) }
+
+// TreeAt lists the files that belong to the transfer in any commit. An
+// empty ref is an empty tree.
+func TreeAt(repo gitx.Repo, ref string, m Matcher) (Tree, error) {
+	t := Tree{}
+	if ref == "" {
+		return t, nil
+	}
+	out, err := repo.Output("ls-tree", "-r", "-z", ref)
 	if err != nil {
 		return nil, err
 	}
-	t := Tree{}
 	for _, rec := range strings.Split(out, "\x00") {
 		meta, path, ok := strings.Cut(rec, "\t")
 		f := strings.Fields(meta)

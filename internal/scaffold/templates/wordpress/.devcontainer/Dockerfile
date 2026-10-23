@@ -1,10 +1,10 @@
 FROM mcr.microsoft.com/devcontainers/php:8.3-bookworm
 
-# Tools the workflow needs: mysql client for DB work, rsync for server sync,
-# node for any build step a theme might have.
+# Tools the workflow needs: mysql client for DB work, node for any build
+# step a theme might have.
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
     && apt-get install -y --no-install-recommends \
-        default-mysql-client rsync less jq unzip \
+        default-mysql-client less jq unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # WP-CLI
