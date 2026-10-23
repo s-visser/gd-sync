@@ -173,7 +173,11 @@ func Devcontainer(s *site.Site) error {
 	if err != nil {
 		return err
 	}
-	return write(s, ".devcontainer/.env", fmt.Sprintf("COMPOSE_PROJECT_NAME=%s\nLIVE_URL=%s\nLOCAL_URL=%s\n", composeName(s.Name), s.LiveURL, s.LocalURL))
+	env := fmt.Sprintf("COMPOSE_PROJECT_NAME=%s\nLIVE_URL=%s\nLOCAL_URL=%s\n", composeName(s.Name), s.LiveURL, s.LocalURL)
+	if s.Type == "wordpress" && s.PHPVersion != "" {
+		env += "PHP_VERSION=" + s.PHPVersion + "\n"
+	}
+	return write(s, ".devcontainer/.env", env)
 }
 
 // composeName is the site name as Docker Compose accepts a project name:

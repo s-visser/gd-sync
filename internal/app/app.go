@@ -41,6 +41,7 @@ reading that repo's own .gd-sync file. No site name to remember or type.
 
   gd-sync db              download the live database into _db/
   gd-sync up / down       start / stop the devcontainer
+  gd-sync php             make the devcontainer run the live site's PHP version
 
   gd-sync shell           SSH into the server
   gd-sync key             install your SSH key (stop typing passwords)
@@ -122,7 +123,7 @@ func run(args []string) error {
 
 	if run, ok := map[string]func(*ctx) error{
 		"deploy": cmdDeploy, "up": cmdUp, "down": cmdDown, "shell": cmdShell,
-		"key": cmdKey, "secrets": cmdSecrets, "scaffold": cmdScaffold,
+		"key": cmdKey, "secrets": cmdSecrets, "scaffold": cmdScaffold, "php": cmdPHP,
 	}[cmd]; ok {
 		return inSite(cfg, "", run)
 	}

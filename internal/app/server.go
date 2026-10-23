@@ -113,6 +113,15 @@ func compose(c *ctx, args ...string) error {
 // is still empty — it also runs the setup an IDE would: import the newest
 // dump, rewrite URLs, create the dev admin.
 func cmdUp(c *ctx) error {
+	if c.s.Type == "wordpress" {
+		v := c.s.PHPVersion
+		if v == "" {
+			v = defaultPHP
+			ui.Warn("No PHP_VERSION in .gd-sync — using PHP %s. Match the live site with: gd-sync php", v)
+		}
+		ui.Info("PHP %s", v)
+		warnUnsupportedPHP(v)
+	}
 	if err := compose(c, "up", "-d", "--build"); err != nil {
 		return err
 	}

@@ -1,11 +1,21 @@
 name: ${COMPOSE_PROJECT_NAME:-gd-sync-site}
 
+# The web server and the workspace share one image, built on the PHP version
+# the live site runs (PHP_VERSION, from .gd-sync via .env).
+x-php: &php
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      PHP_VERSION: ${PHP_VERSION:-8.3}
+  image: gd-sync-wordpress:php${PHP_VERSION:-8.3}
+
 services:
-  # The container JetBrains / VS Code attaches to. Has wp-cli, php and node.
+  # The container JetBrains / VS Code attaches to. Has wp-cli, composer and
+  # the same PHP as the site.
   workspace:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    <<: *php
+    user: vscode
     volumes:
       - ..:/workspace:cached
       - ..:/var/www/html:cached
@@ -22,7 +32,7 @@ services:
         condition: service_healthy
 
   wordpress:
-    image: wordpress:php8.3-apache
+    <<: *php
     restart: unless-stopped
     ports:
       - "${WP_PORT:-8080}:80"

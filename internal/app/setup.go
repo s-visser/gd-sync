@@ -232,6 +232,20 @@ func cmdNew(g *config.Global) error {
   Fix REMOTE_ROOT in %s, then run: gd-sync sync`, s.RemoteRoot, filepath.Join(dir, ".gd-sync"))
 	}
 
+	if stype == "wordpress" {
+		ui.Step("Matching the live site's PHP version")
+		if changed, err := c.checkPHP(conn, true); err != nil {
+			return err
+		} else if changed {
+			if err := git.Quiet("add", "-A"); err != nil {
+				return err
+			}
+			if err := git.Commit("Use PHP " + s.PHPVersion + ", as the live site does"); err != nil {
+				return err
+			}
+		}
+	}
+
 	if ui.Confirm("Install an SSH key so you stop typing the password?") {
 		if err := cmdKey(c); err != nil {
 			ui.Fail(err)

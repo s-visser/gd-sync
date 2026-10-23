@@ -1,6 +1,8 @@
 package app
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -499,5 +501,68 @@ func TestNewRefusesNonEmptyFolder(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, ".gd-sync"), nil, 0o644)
 	if err := emptyOrMissing(dir); err == nil || !strings.Contains(err.Error(), "gd-sync adopt") {
 		t.Errorf("an existing site should point to adopt: %v", err)
+	}
+}
+
+func TestPHPVersionHelpers(t *testing.T) {
+	for in, want := range map[string]string{"81": "8.1", "56": "5.6", "8.5": "8.5", "7": "7"} {
+		if got := phpDotted(in); got != want {
+			t.Errorf("phpDotted(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if !phpOlder("5.4", "5.6") || phpOlder("7.4", "5.6") || !phpOlder("7.4", "7.10") || phpOlder("8.5", "8.5") {
+		t.Error("phpOlder compares wrongly")
+	}
+	// Old versions are kept, with a warning; only versions without any
+	// image move — to the closest one.
+	for in, want := range map[string]string{"7.4": "7.4", "5.6": "5.6", "5.4": "5.6", "8.5": "8.5", "": defaultPHP} {
+		if got := phpForImage(in); got != want {
+			t.Errorf("phpForImage(%q) = %q, want %q", in, got, want)
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Powered-By", "PHP/7.4.33")
+	}))
+	defer srv.Close()
+	if got := headerPHP(srv.URL); got != "7.4" {
+		t.Errorf("headerPHP = %q", got)
+	}
+}
+
+// gd-sync php finds the version the server uses for the web root and
+// writes it where the devcontainer reads it.
+func TestPHPDetection(t *testing.T) {
+	w := newWorld(t, "wordpress", "wp-content", "")
+	old := cpanelUserdata
+	t.Cleanup(func() { cpanelUserdata = old })
+	cpanelUserdata = t.TempDir()
+	me, _ := exec.Command("id", "-un").Output()
+	ud := filepath.Join(cpanelUserdata, strings.TrimSpace(string(me)))
+
+	// The domain's cPanel setting, found by its document root.
+	w.write(ud, "other.example", "documentroot: /somewhere/else\nphpversion: ea-php56\n")
+	w.write(ud, "acme.example.host", "documentroot: "+w.server+"\nphpversion: ea-php81\n")
+	w.write(ud, "acme.example.host.cache", "documentroot: "+w.server+"\nphpversion: ea-php80\n")
+	w.mustGD("php")
+	if !strings.Contains(w.read(w.repo, ".gd-sync"), "PHP_VERSION=8.1\n") {
+		t.Errorf(".gd-sync:\n%s", w.read(w.repo, ".gd-sync"))
+	}
+	if !strings.Contains(w.read(w.repo, ".devcontainer/.env"), "PHP_VERSION=8.1\n") {
+		t.Errorf(".devcontainer/.env:\n%s", w.read(w.repo, ".devcontainer/.env"))
+	}
+
+	// A handler in .htaccess beats it — the nearest one, as Apache reads them,
+	// and commented-out lines don't count.
+	w.write(w.srv.Home, ".htaccess", "AddHandler application/x-httpd-ea-php73 .php\n")
+	w.write(w.server, ".htaccess", "# AddHandler application/x-httpd-ea-php70 .php\nAddHandler application/x-httpd-alt-php74___lsphp .php\n")
+	w.mustGD("php")
+	if !strings.Contains(w.read(w.repo, ".gd-sync"), "PHP_VERSION=7.4\n") {
+		t.Errorf("nearest .htaccess should win:\n%s", w.read(w.repo, ".gd-sync"))
+	}
+	os.Remove(filepath.Join(w.server, ".htaccess"))
+	w.mustGD("php")
+	if !strings.Contains(w.read(w.repo, ".gd-sync"), "PHP_VERSION=7.3\n") {
+		t.Errorf("a parent folder's .htaccess applies too:\n%s", w.read(w.repo, ".gd-sync"))
 	}
 }

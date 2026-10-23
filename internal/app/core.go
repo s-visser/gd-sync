@@ -37,7 +37,11 @@ func cmdSync(c *ctx) error {
 	if c.noMirror {
 		return nil
 	}
-	return c.mirror(conn)
+	if err := c.mirror(conn); err != nil {
+		return err
+	}
+	_, err = c.checkPHP(conn, false)
+	return err
 }
 
 // syncMain is the snapshot half of cmdSync.

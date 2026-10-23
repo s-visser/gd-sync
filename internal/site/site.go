@@ -31,6 +31,7 @@ type Site struct {
 	LiveURL    string
 	LocalURL   string
 	Exclude    []string
+	PHPVersion string // what the live site runs, e.g. "8.3"; the devcontainer uses the same
 
 	SSHHost string
 	SSHUser string
@@ -103,6 +104,8 @@ func (s *Site) set(k, v string) {
 		s.LocalURL = v
 	case "EXCLUDE":
 		s.Exclude = strings.Fields(v)
+	case "PHP_VERSION":
+		s.PHPVersion = v
 	case "SSH_HOST":
 		s.SSHHost = v
 	case "SSH_USER":
@@ -166,6 +169,10 @@ LOCAL_URL=%s
 EXCLUDE=%s
 `, s.Name, s.Type, s.RemoteRoot, strings.Join(s.Tracked, " "), s.BuildCmd, s.PublishDir,
 		s.LiveURL, s.LocalURL, strings.Join(s.Exclude, " "))
+	if s.Type == "wordpress" {
+		shared += "# The live site's PHP version — the devcontainer runs the same. Check with: gd-sync php\n"
+		shared += "PHP_VERSION=" + s.PHPVersion + "\n"
+	}
 	local := fmt.Sprintf(`# How to reach the server from this machine. Not committed.
 # The GitHub workers use repository secrets instead — see: gd-sync secrets
 SSH_HOST=%s
