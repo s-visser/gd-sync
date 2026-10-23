@@ -62,6 +62,23 @@ func TestRunAndAcceptNewHost(t *testing.T) {
 	conn.Close()
 }
 
+func TestAcceptNewHostOfferingCertificate(t *testing.T) {
+	home := setupHome(t)
+	srv := sshtest.StartWithHostCert(t)
+
+	for range 2 {
+		conn, err := remote.Dial(srv.Host, "test", srv.Port)
+		if err != nil {
+			t.Fatal(err)
+		}
+		conn.Close()
+	}
+	kh, _ := os.ReadFile(filepath.Join(home, ".ssh", "known_hosts"))
+	if strings.Contains(string(kh), "cert") || strings.Count(string(kh), "\n") != 1 {
+		t.Errorf("known_hosts should hold the one plain host key: %q", kh)
+	}
+}
+
 func TestRefuseChangedHostKey(t *testing.T) {
 	home := setupHome(t)
 	srv := sshtest.Start(t)

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -101,6 +102,9 @@ func hostKeyCheck(addr string) (ssh.HostKeyCallback, []string, error) {
 			algos = append(algos, algorithmsFor(k.Key.Type())...)
 		}
 	}
+	if len(algos) == 0 {
+		algos = plainHostKeyAlgorithms()
+	}
 
 	cb := func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 		err := known(hostname, remote, key)
@@ -132,6 +136,20 @@ type probeKey struct{}
 func (probeKey) Type() string                        { return "gd-sync-probe" }
 func (probeKey) Marshal() []byte                     { return []byte("gd-sync-probe") }
 func (probeKey) Verify([]byte, *ssh.Signature) error { return errors.New("probe") }
+
+// plainHostKeyAlgorithms is every supported host key algorithm except the
+// certificate ones. Some servers (GoDaddy's, for one) offer host certificates,
+// which known_hosts can't accept without a @cert-authority line, so a first
+// connection must ask for a plain key it can add.
+func plainHostKeyAlgorithms() []string {
+	var algos []string
+	for _, a := range ssh.SupportedAlgorithms().HostKeys {
+		if !strings.Contains(a, "-cert-") {
+			algos = append(algos, a)
+		}
+	}
+	return algos
+}
 
 func algorithmsFor(keyType string) []string {
 	if keyType == ssh.KeyAlgoRSA {

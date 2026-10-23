@@ -247,5 +247,5 @@ Every deploy — worker or manual — tars the current server copy to
 
 ```bash
 gd-sync shell
-cd ~/public_html && tar xzf ~/gd-sync-backups/<site>-20261022-143000.tar.gz
+cd ~/public_html/<domain> && tar xzf ~/gd-sync-backups/<site>-20261022-143000.tar.gz
 ```

@@ -27,20 +27,30 @@ type Server struct {
 }
 
 // Start runs a server until the test ends.
-func Start(t testing.TB) *Server {
+func Start(t testing.TB) *Server { return start(t, false) }
+
+// StartWithHostCert runs a server that also offers a CA-signed certificate
+// of its host key, as GoDaddy's servers do.
+func StartWithHostCert(t testing.TB) *Server { return start(t, true) }
+
+func start(t testing.TB, hostCert bool) *Server {
 	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
-	if err != nil {
-		t.Fatal(err)
-	}
+	signer := newSigner(t)
 	cfg := &ssh.ServerConfig{
 		PublicKeyCallback: func(ssh.ConnMetadata, ssh.PublicKey) (*ssh.Permissions, error) { return nil, nil },
 	}
 	cfg.AddHostKey(signer)
+	if hostCert {
+		cert := &ssh.Certificate{Key: signer.PublicKey(), CertType: ssh.HostCert, ValidBefore: ssh.CertTimeInfinity}
+		if err := cert.SignCert(rand.Reader, newSigner(t)); err != nil {
+			t.Fatal(err)
+		}
+		certSigner, err := ssh.NewCertSigner(cert, signer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cfg.AddHostKey(certSigner)
+	}
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -52,6 +62,18 @@ func Start(t testing.TB) *Server {
 	go s.serve(cfg)
 	t.Cleanup(func() { l.Close(); s.wg.Wait() })
 	return s
+}
+
+func newSigner(t testing.TB) ssh.Signer {
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return signer
 }
 
 func (s *Server) serve(cfg *ssh.ServerConfig) {

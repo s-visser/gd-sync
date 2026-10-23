@@ -167,7 +167,7 @@ func cmdNew(g *config.Global) error {
 	s.SSHHost = ui.Ask("SSH host (IP or server name):", "")
 	s.SSHUser = ui.Ask("SSH username (cPanel username):", "")
 	s.SSHPort = ui.Ask("SSH port:", "22")
-	s.RemoteRoot = strings.TrimSuffix(ui.Ask("Remote web root:", "/home/"+s.SSHUser+"/public_html"), "/")
+	s.RemoteRoot = strings.TrimSuffix(ui.Ask("Remote web root:", "/home/"+s.SSHUser+"/public_html/"+domain), "/")
 	if stype == "wordpress" {
 		fmt.Fprintln(os.Stderr)
 		ui.Info("Which paths do YOU author? Space separated, relative to the web root.")
