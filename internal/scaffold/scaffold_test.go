@@ -53,6 +53,20 @@ func TestAllWordPress(t *testing.T) {
 	if env := read(".devcontainer/.env"); !strings.Contains(env, "WP_PORT=8080\nDB_PORT=13306\nMAIL_PORT=8025\n") {
 		t.Errorf(".env lacks the ports:\n%s", env)
 	}
+	// The live site's PHP limits reach php.ini through .env; values that
+	// could break it don't.
+	s.PHPIni = map[string]string{"memory_limit": "1024M", "post_max_size": "1G\nX=1"}
+	if err := Env(s); err != nil {
+		t.Fatal(err)
+	}
+	if env := read(".devcontainer/.env"); !strings.Contains(env, "PHP_INI_MEMORY_LIMIT=1024M\n") || strings.Contains(env, "POST_MAX_SIZE") {
+		t.Errorf(".env and php_ini:\n%s", env)
+	}
+	if !strings.Contains(read(".devcontainer/php.ini"), "memory_limit = ${PHP_INI_MEMORY_LIMIT}") ||
+		!strings.Contains(dc, "./php.ini:/usr/local/etc/php/conf.d/zz-gd-sync.ini:ro") ||
+		!strings.Contains(dc, "PHP_INI_MEMORY_LIMIT: ${PHP_INI_MEMORY_LIMIT:-128M}") {
+		t.Error("the devcontainer doesn't pass php_ini on to PHP")
+	}
 	if read(".gitattributes") == "" || !strings.Contains(read(".gitattributes"), "* -text") {
 		t.Error(".gitattributes must turn off line-ending conversion")
 	}

@@ -569,6 +569,21 @@ func TestPHPDetection(t *testing.T) {
 	if !strings.Contains(w.read(w.repo, ".gd-sync.toml"), "php_version = \"7.3\"\n") {
 		t.Errorf("a parent folder's .htaccess applies too:\n%s", w.read(w.repo, ".gd-sync.toml"))
 	}
+
+	// The limits come from the web root's .user.ini, over the server's php.ini.
+	if _, err := exec.LookPath("php"); err != nil {
+		t.Log("no php on this machine — PHP limits not tested")
+		return
+	}
+	w.write(w.server, ".user.ini", "; a comment\nmemory_limit = 1024M\nmax_input_vars = 3000\nauto_prepend_file = '/home/x/waf.php'\n")
+	w.mustGD("php")
+	toml := w.read(w.repo, ".gd-sync.toml")
+	if !strings.Contains(toml, "[php_ini]\n") || !strings.Contains(toml, "memory_limit = \"1024M\"\n") || strings.Contains(toml, "auto_prepend_file") {
+		t.Errorf(".gd-sync.toml:\n%s", toml)
+	}
+	if !strings.Contains(w.read(w.repo, ".devcontainer/.env"), "PHP_INI_MAX_INPUT_VARS=3000\n") {
+		t.Errorf(".devcontainer/.env:\n%s", w.read(w.repo, ".devcontainer/.env"))
+	}
 }
 
 // With the server in the global settings, new needs only the domain: every

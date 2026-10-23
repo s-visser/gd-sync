@@ -12,10 +12,12 @@ package site
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -41,6 +43,10 @@ type Site struct {
 	LocalURL   string   `toml:"local_url"`
 	Exclude    []string `toml:"exclude"`
 	PHPVersion string   `toml:"php_version"` // what the live site runs, e.g. "8.3"; the devcontainer uses the same
+
+	// The live site's PHP limits, e.g. memory_limit = "1024M": its php.ini and
+	// .user.ini together. The devcontainer uses the same.
+	PHPIni map[string]string `toml:"php_ini"`
 
 	// The ports the local site takes on this computer. Give every site its own
 	// to run several at once. Defaults fills in what the file leaves out.
@@ -323,6 +329,13 @@ func (s *Site) Write() error {
 	if s.Type == "wordpress" {
 		b.WriteString("\n# The live site's PHP version — the devcontainer runs the same. Check with: gd-sync php\n")
 		fmt.Fprintf(&b, "php_version = %s\n", config.String(s.PHPVersion))
+		if len(s.PHPIni) > 0 {
+			b.WriteString("\n# The live site's PHP limits, from its php.ini and .user.ini — the devcontainer\n")
+			b.WriteString("# uses the same. Check with: gd-sync php\n[php_ini]\n")
+			for _, k := range slices.Sorted(maps.Keys(s.PHPIni)) {
+				fmt.Fprintf(&b, "%s = %s\n", k, config.String(s.PHPIni[k]))
+			}
+		}
 	}
 	for i, v := range s.Vendor {
 		if i == 0 {

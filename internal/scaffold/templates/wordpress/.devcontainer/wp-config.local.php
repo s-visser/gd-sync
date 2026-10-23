@@ -31,6 +31,17 @@ define('WP_SITEURL', $local);
 define('WP_DEBUG', true);
 define('WP_DEBUG_LOG', true);
 define('WP_DEBUG_DISPLAY', false);
+// Under WP-CLI a fatal error otherwise only says "There has been a critical
+// error". Print the real one instead; notices and deprecations stay in the log.
+if (defined('WP_CLI') && WP_CLI) {
+	define('WP_DISABLE_FATAL_ERROR_HANDLER', true);
+	register_shutdown_function(function () {
+		$e = error_get_last();
+		if ($e && in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) {
+			fwrite(STDERR, "PHP Fatal error: {$e['message']} in {$e['file']}:{$e['line']}\n");
+		}
+	});
+}
 define('DISALLOW_FILE_EDIT', true);
 define('AUTOMATIC_UPDATER_DISABLED', true);
 define('WP_ENVIRONMENT_TYPE', 'local');

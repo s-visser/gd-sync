@@ -67,6 +67,24 @@ func TestWritePorts(t *testing.T) {
 	}
 }
 
+// php_ini is written as a table that reads back, with vendor folders after it.
+func TestWritePHPIni(t *testing.T) {
+	s := &Site{Repo: t.TempDir(), Name: "a", Type: "wordpress", PHPVersion: "8.5",
+		PHPIni: map[string]string{"memory_limit": "1024M", "max_input_vars": "3000"},
+		Vendor: []Vendor{{Path: "wp-content/plugins/p/vendor"}}}
+	s.Defaults()
+	if err := s.Write(); err != nil {
+		t.Fatal(err)
+	}
+	back, err := Load(s.Repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.PHPIni["memory_limit"] != "1024M" || back.PHPIni["max_input_vars"] != "3000" || len(back.Vendor) != 1 || back.PHPVersion != "8.5" {
+		t.Errorf("reloaded: %+v", back)
+	}
+}
+
 func equal(a, b []int) bool {
 	if len(a) != len(b) {
 		return false

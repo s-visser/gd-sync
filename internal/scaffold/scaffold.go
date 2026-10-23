@@ -234,8 +234,32 @@ func Env(s *site.Site) error {
 		if s.PHPVersion != "" {
 			env += "PHP_VERSION=" + s.PHPVersion + "\n"
 		}
+		for _, k := range PHPSettings {
+			if v := s.PHPIni[k]; PHPValue(v) {
+				env += "PHP_INI_" + strings.ToUpper(k) + "=" + v + "\n"
+			}
+		}
 	}
 	return write(s, ".devcontainer/.env", env)
+}
+
+// PHPSettings are the php_ini settings the devcontainer copies from the live
+// site: its limits. The devcontainer's php.ini sets each from .env, and
+// docker-compose.yml has PHP's own default for the ones a site leaves out.
+var PHPSettings = []string{"memory_limit", "max_execution_time", "max_input_time", "max_input_vars", "post_max_size", "upload_max_filesize"}
+
+// PHPValue reports whether v is a value those settings take, such as 1024M,
+// 300 or -1, and nothing that could break .env or php.ini.
+func PHPValue(v string) bool {
+	if v == "" {
+		return false
+	}
+	for _, r := range v {
+		if !(r >= '0' && r <= '9' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r == '-' || r == '.') {
+			return false
+		}
+	}
+	return true
 }
 
 // composeName is the site name as Docker Compose accepts a project name:

@@ -11,6 +11,16 @@ x-php: &php
       GD_SYNC_VERSION: ${GD_SYNC_VERSION:-latest}
   image: gd-sync-wordpress:php${PHP_VERSION:-8.3}
 
+# The live site's PHP limits (php_ini in .gd-sync.toml), which php.ini reads.
+# The defaults are PHP's own, for a site that sets none.
+x-php-ini: &php-ini
+  PHP_INI_MEMORY_LIMIT: ${PHP_INI_MEMORY_LIMIT:-128M}
+  PHP_INI_MAX_EXECUTION_TIME: ${PHP_INI_MAX_EXECUTION_TIME:-30}
+  PHP_INI_MAX_INPUT_TIME: ${PHP_INI_MAX_INPUT_TIME:--1}
+  PHP_INI_MAX_INPUT_VARS: ${PHP_INI_MAX_INPUT_VARS:-1000}
+  PHP_INI_POST_MAX_SIZE: ${PHP_INI_POST_MAX_SIZE:-8M}
+  PHP_INI_UPLOAD_MAX_FILESIZE: ${PHP_INI_UPLOAD_MAX_FILESIZE:-2M}
+
 services:
   # The container JetBrains / VS Code attaches to. Has wp-cli, composer, git,
   # gh, gd-sync and the same PHP as the site.
@@ -22,6 +32,7 @@ services:
       - ..:/var/www/html:cached
       - ./wp-config.local.php:/var/www/html/wp-config.php:ro
       - ./htaccess:/var/www/html/.htaccess:ro
+      - ./php.ini:/usr/local/etc/php/conf.d/zz-gd-sync.ini:ro
       - ..:/gd-sync/site:ro
       # Your SSH keys and known hosts, so gd-sync reaches the server from in
       # here as it does from your computer.
@@ -29,6 +40,7 @@ services:
       # One GitHub login for every gd-sync site: run 'gh auth login' once.
       - gh-config:/home/vscode/.config/gh
     environment:
+      <<: *php-ini
       LOCAL_URL: ${LOCAL_URL:-http://localhost:8080}
       LIVE_URL: ${LIVE_URL:-}
       # The ports on your computer (port, db_port, mail_port in .gd-sync.toml),
@@ -52,6 +64,7 @@ services:
     ports:
       - "${WP_PORT:-8080}:80"
     environment:
+      <<: *php-ini
       LOCAL_URL: ${LOCAL_URL:-http://localhost:8080}
     volumes:
       # The whole site, straight from the repo's folder: the paths you maintain
@@ -63,6 +76,8 @@ services:
       # wp-config.php for its table prefix.
       - ./wp-config.local.php:/var/www/html/wp-config.php:ro
       - ./htaccess:/var/www/html/.htaccess:ro
+      # The live site's PHP limits, from .env.
+      - ./php.ini:/usr/local/etc/php/conf.d/zz-gd-sync.ini:ro
       - ..:/gd-sync/site:ro
     depends_on:
       db:

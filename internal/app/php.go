@@ -2,8 +2,10 @@ package app
 
 import (
 	"fmt"
+	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -200,8 +202,70 @@ func phpOlder(a, b string) bool {
 	return am < bm || am == bm && an < bn
 }
 
-// checkPHP compares the live PHP with the site's PHP_VERSION. With update,
-// it rewrites .gd-sync.toml and the devcontainer's .env to match.
+// phpIniProbe prints "setting<TAB>value<TAB>where from" for each of the
+// settings in $3 that the web root ($1) gets: from the web root's .user.ini,
+// else from the php.ini of the site's PHP version ($2). get_cfg_var reads
+// the ini files rather than what the command line runs with, which always
+// has max_execution_time 0. Only the PHP builds cPanel and CloudLinux put
+// in /opt share their php.ini with the website; a plain php can have one
+// of its own for the command line, so with that only .user.ini counts.
+// Settings PHP is left to default on are not printed.
+const phpIniProbe = `root=$1; n=$(printf %s "$2" | tr -d .)
+php=php; base=0
+for p in /opt/alt/php$n/usr/bin/php /opt/cpanel/ea-php$n/root/usr/bin/php; do
+  [ -x "$p" ] && php=$p && base=1 && break
+done
+"$php" -r '
+$root = $argv[1]; $base = $argv[3] === "1";
+$name = ini_get("user_ini.filename");
+$user = $name === false || $name === "" ? array() : @parse_ini_file($root . "/" . $name, false, INI_SCANNER_RAW);
+if (!is_array($user)) $user = array();
+foreach (explode(",", $argv[2]) as $k) {
+  if (array_key_exists($k, $user)) { echo $k, "\t", $user[$k], "\t", $name, "\n"; continue; }
+  $v = $base ? get_cfg_var($k) : false;
+  if ($v !== false && $v !== "") echo $k, "\t", $v, "\t", php_ini_loaded_file(), "\n";
+}' -- "$root" "$3" "$base" 2>/dev/null
+exit 0
+`
+
+// livePHPIni reads the limits the live site's PHP runs with, and where each
+// comes from. Empty when the server can't say.
+func (c *ctx) livePHPIni(conn *remote.Conn, version string) (ini, from map[string]string) {
+	ini, from = map[string]string{}, map[string]string{}
+	out, err := conn.Output("sh -s -- "+remote.QuoteAll([]string{c.s.RemoteRoot, version, strings.Join(scaffold.PHPSettings, ",")}), strings.NewReader(phpIniProbe))
+	if err != nil {
+		return ini, from
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		f := strings.Split(strings.TrimRight(line, "\r"), "\t")
+		if len(f) < 3 || !slices.Contains(scaffold.PHPSettings, f[0]) {
+			continue
+		}
+		if v := strings.TrimSpace(f[1]); scaffold.PHPValue(v) {
+			ini[f[0]], from[f[0]] = v, f[2]
+		}
+	}
+	return ini, from
+}
+
+// phpIniLine is the settings for a message: "memory_limit 1024M (.user.ini), ...".
+func phpIniLine(ini, from map[string]string) string {
+	var parts []string
+	for _, k := range scaffold.PHPSettings {
+		if v, ok := ini[k]; ok {
+			p := k + " " + v
+			if from[k] != "" {
+				p += " (" + from[k] + ")"
+			}
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// checkPHP compares the live PHP, its version and its limits, with the
+// site's php_version and php_ini. With update, it rewrites .gd-sync.toml and
+// the devcontainer to match.
 func (c *ctx) checkPHP(conn *remote.Conn, update bool) (changed bool, err error) {
 	live, full, source := c.livePHP(conn)
 	if live == "" {
@@ -213,20 +277,37 @@ func (c *ctx) checkPHP(conn *remote.Conn, update bool) (changed bool, err error)
 	if want != live {
 		match = fmt.Sprintf("PHP %s, the closest there is to live's %s (%s)", want, full, source)
 	}
-	if want == c.s.PHPVersion {
+	ini, from := c.livePHPIni(conn, live)
+	// When the server can't say, the limits already written stay.
+	sameIni := len(ini) == 0 || maps.Equal(ini, c.s.PHPIni)
+	if len(ini) == 0 {
+		ui.Warn("Could not read the live site's PHP limits — the local site keeps its own")
+	}
+	if want == c.s.PHPVersion && sameIni {
 		ui.OK("%s", match)
+		if len(ini) > 0 {
+			ui.OK("PHP limits the same as live: %s", phpIniLine(ini, from))
+		}
 		return false, nil
 	}
 	if !update {
-		local := c.s.PHPVersion
-		if local == "" {
-			local = defaultPHP
+		if want != c.s.PHPVersion {
+			local := c.s.PHPVersion
+			if local == "" {
+				local = defaultPHP
+			}
+			ui.Warn("The live site runs PHP %s (%s), the local site PHP %s.", full, source, local)
 		}
-		ui.Warn("The live site runs PHP %s (%s), the local site PHP %s.", full, source, local)
+		if !sameIni {
+			ui.Warn("The live site's PHP limits differ from the local site's: %s", phpIniLine(ini, from))
+		}
 		ui.Info("Match it with: gd-sync php")
 		return false, nil
 	}
 	c.s.PHPVersion = want
+	if len(ini) > 0 {
+		c.s.PHPIni = ini
+	}
 	if err := c.s.Write(); err != nil {
 		return false, err
 	}
@@ -234,10 +315,13 @@ func (c *ctx) checkPHP(conn *remote.Conn, update bool) (changed bool, err error)
 		return false, err
 	}
 	ui.OK("%s — written to %s", match, site.File)
+	if len(ini) > 0 {
+		ui.OK("PHP limits the same as live: %s", phpIniLine(ini, from))
+	}
 	return true, nil
 }
 
-// cmdPHP sets the devcontainer to the PHP version the live site runs.
+// cmdPHP sets the devcontainer to the PHP version and limits the live site runs with.
 func cmdPHP(c *ctx) error {
 	if c.s.Type != "wordpress" {
 		ui.Info("%s has no PHP.", c.s.Name)
