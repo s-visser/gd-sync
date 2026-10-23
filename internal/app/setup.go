@@ -170,9 +170,11 @@ func cmdNew(g *config.Global) error {
 	s.RemoteRoot = strings.TrimSuffix(ui.Ask("Remote web root:", "/home/"+s.SSHUser+"/public_html/"+domain), "/")
 	if stype == "wordpress" {
 		fmt.Fprintln(os.Stderr)
-		ui.Info("Which paths do YOU author? Space separated, relative to the web root.")
-		ui.Info("Core and uploads stay out — that is what keeps this repo evergreen.")
-		s.Tracked = strings.Fields(ui.Ask("Tracked paths:", "wp-content/plugins/"+name+"-custom"))
+		ui.Info("Which paths do YOU maintain? Space separated, relative to the web root,")
+		ui.Info("e.g. wp-content/plugins/%s-custom. Only these go into git; the rest of", name)
+		ui.Info("the site is downloaded too, so it runs locally, but git ignores it.")
+		ui.Info("Leave empty to start with none — add them to TRACKED in .gd-sync later.")
+		s.Tracked = strings.Fields(ui.Ask("Maintained paths:", ""))
 	}
 	s.Defaults()
 

@@ -1,6 +1,7 @@
 package remote
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -23,12 +24,19 @@ var KeyFiles = []string{"id_ed25519", "id_ecdsa", "id_rsa"}
 func SSHDir() string { return filepath.Join(config.UserHome(), ".ssh") }
 
 func authMethods(user, host string) []ssh.AuthMethod {
-	var methods []ssh.AuthMethod
-	if a := dialAgent(); a != nil {
-		methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(a).Signers))
+	// One publickey method for the agent and the key files together: the
+	// client tries each method only once, so a second one would never run
+	// after an agent that is up but doesn't hold the right key.
+	keys := func() ([]ssh.Signer, error) {
+		var signers []ssh.Signer
+		if a := dialAgent(); a != nil {
+			signers, _ = agent.NewClient(a).Signers()
+		}
+		files, err := keyFileSigners(signers)
+		return append(signers, files...), err
 	}
-	methods = append(methods,
-		ssh.PublicKeysCallback(keyFileSigners),
+	return []ssh.AuthMethod{
+		ssh.PublicKeysCallback(keys),
 		ssh.RetryableAuthMethod(ssh.PasswordCallback(func() (string, error) {
 			return ui.Secret(fmt.Sprintf("Password for %s@%s: ", user, host))
 		}), 3),
@@ -47,13 +55,12 @@ func authMethods(user, host string) []ssh.AuthMethod {
 			}
 			return answers, nil
 		}), 3),
-	)
-	return methods
+	}
 }
 
 // keyFileSigners loads the key files that exist, asking for a passphrase
-// when one is protected. Only called if the agent didn't get us in.
-func keyFileSigners() ([]ssh.Signer, error) {
+// when one is protected — unless the agent already holds that key.
+func keyFileSigners(inAgent []ssh.Signer) ([]ssh.Signer, error) {
 	var signers []ssh.Signer
 	for _, name := range KeyFiles {
 		path := filepath.Join(SSHDir(), name)
@@ -63,6 +70,9 @@ func keyFileSigners() ([]ssh.Signer, error) {
 		}
 		s, err := ssh.ParsePrivateKey(pem)
 		var missing *ssh.PassphraseMissingError
+		if errors.As(err, &missing) && holds(inAgent, missing.PublicKey) {
+			continue
+		}
 		if errors.As(err, &missing) {
 			pass, perr := ui.Secret(fmt.Sprintf("Passphrase for %s: ", path))
 			if perr != nil {
@@ -77,6 +87,18 @@ func keyFileSigners() ([]ssh.Signer, error) {
 		signers = append(signers, s)
 	}
 	return signers, nil
+}
+
+func holds(signers []ssh.Signer, key ssh.PublicKey) bool {
+	if key == nil {
+		return false
+	}
+	for _, s := range signers {
+		if bytes.Equal(s.PublicKey().Marshal(), key.Marshal()) {
+			return true
+		}
+	}
+	return false
 }
 
 // hostKeyCheck returns a host key callback with "accept new" behaviour, and

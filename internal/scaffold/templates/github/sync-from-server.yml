@@ -4,8 +4,9 @@ name: Sync server into main
 # someone edits via cPanel, or a WordPress update rewrites a tracked file.
 # Runs nightly, on demand, and automatically before any PR merge (see verify-main).
 #
-# It runs 'gd-sync sync' — the same command as on your computer, with the same
-# excludes. It only ever writes to this repo, never to the server.
+# It runs 'gd-sync sync --no-mirror' — the same command as on your computer,
+# with the same excludes, minus the local copy of the whole site, which a
+# worker has no use for. It only ever writes to this repo, never to the server.
 
 on:
   schedule:
@@ -76,7 +77,7 @@ jobs:
         id: sync
         run: |
           before=$(git rev-parse HEAD)
-          gd-sync sync -y
+          gd-sync sync -y --no-mirror
           if [ "$(git rev-parse HEAD)" = "$before" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "main already matches the server." >> "$GITHUB_STEP_SUMMARY"

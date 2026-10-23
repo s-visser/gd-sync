@@ -62,17 +62,11 @@ func ListRemote(conn *remote.Conn, root string, m Matcher) (Manifest, error) {
 // DropIgnored removes the paths git ignores and main doesn't track, so a
 // server file the repo deliberately leaves out never counts as new.
 func DropIgnored(repo gitx.Repo, man Manifest) error {
-	if len(man) == 0 {
-		return nil
-	}
-	out, err := repo.Input(gitx.NUL(sortedKeys(man)), "check-ignore", "-z", "--stdin")
-	if err != nil && gitx.ExitCode(err) != 1 { // 1 only means nothing was ignored
-		return err
-	}
-	for _, p := range strings.Split(out, "\x00") {
+	ign, err := Ignored(repo, sortedKeys(man))
+	for p := range ign {
 		delete(man, p)
 	}
-	return nil
+	return err
 }
 
 // MainTree lists main's files that belong to the transfer.

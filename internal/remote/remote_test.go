@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
 
 	"github.com/s-visser/gd-sync/internal/remote"
@@ -77,6 +78,40 @@ func TestAcceptNewHostOfferingCertificate(t *testing.T) {
 	if strings.Contains(string(kh), "cert") || strings.Count(string(kh), "\n") != 1 {
 		t.Errorf("known_hosts should hold the one plain host key: %q", kh)
 	}
+}
+
+// An agent that's running but doesn't hold the server's key — the usual
+// state on a Mac — must not stop the key files from being tried.
+func TestKeyFileUsedAfterEmptyAgent(t *testing.T) {
+	setupHome(t)
+	srv := sshtest.Start(t)
+	dir, err := os.MkdirTemp("/tmp", "agent") // short: socket paths are limited
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go agent.ServeAgent(agent.NewKeyring(), c)
+		}
+	}()
+	t.Setenv("SSH_AUTH_SOCK", sock)
+
+	conn, err := remote.Dial(srv.Host, "test", srv.Port)
+	if err != nil {
+		t.Fatalf("with an empty agent running: %v", err)
+	}
+	conn.Close()
 }
 
 func TestRefuseChangedHostKey(t *testing.T) {

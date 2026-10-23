@@ -5,7 +5,6 @@ set -euo pipefail
 
 WP=/var/www/html
 LOCAL_URL="${LOCAL_URL:-http://localhost:8080}"
-DB=(--dbhost=db --dbname=wordpress --dbuser=wordpress --dbpass=wordpress)
 wpc() { wp --path="$WP" --allow-root "$@"; }
 
 echo "==> Waiting for the database"
@@ -14,21 +13,11 @@ for i in $(seq 1 60); do
   sleep 2
 done
 
-echo "==> Waiting for WordPress core to unpack"
+# Core comes from gd-sync's copy of the live site. Without one (no sync yet),
+# the wordpress image unpacks a stock core into the folder instead.
+echo "==> Waiting for WordPress core"
 for i in $(seq 1 60); do [ -f "$WP/wp-settings.php" ] && break; sleep 2; done
-
-if [ ! -f "$WP/wp-config.php" ]; then
-  echo "==> Writing wp-config.php"
-  wpc config create "${DB[@]}" --skip-check --force \
-    --extra-php <<'PHP'
-define('WP_DEBUG', true);
-define('WP_DEBUG_LOG', true);
-define('WP_DEBUG_DISPLAY', false);
-define('DISALLOW_FILE_EDIT', true);
-define('AUTOMATIC_UPDATER_DISABLED', true);
-define('WP_ENVIRONMENT_TYPE', 'local');
-PHP
-fi
+[ -f "$WP/wp-settings.php" ] || { echo "No WordPress in the folder — run: gd-sync sync"; exit 1; }
 
 # ---------------------------------------------------------------------------
 # If gd-sync pulled a database dump, use it. Otherwise install a blank site.
@@ -65,20 +54,12 @@ fi
 # Local-only hygiene: nothing should reach the outside world from here.
 # ---------------------------------------------------------------------------
 echo "==> Making the local copy safe to poke at"
-wpc config set WP_ENVIRONMENT_TYPE local --quiet 2>/dev/null || true
-# discourage search engines, kill caching/CDN plugins that fight local dev
+# Which plugins are active comes from the live database, so the local site
+# runs what live runs. Only these are switched off: search engines are
+# discouraged, and caching/security plugins that fight local dev go.
 wpc option update blog_public 0 --quiet 2>/dev/null || true
 for p in wordfence w3-total-cache wp-super-cache wp-rocket really-simple-ssl; do
   wpc plugin deactivate "$p" --quiet 2>/dev/null || true
-done
-
-# activate whatever we're actually here to work on
-for dir in "$WP"/wp-content/plugins/*/; do
-  name="$(basename "$dir")"
-  [ -f "/workspace/wp-content/plugins/$name/$name.php" ] \
-    || [ -d "/workspace/wp-content/plugins/$name" ] || continue
-  wpc plugin activate "$name" --quiet 2>/dev/null \
-    && echo "    activated plugin: $name" || true
 done
 
 chmod -R a+rwX "$WP/wp-content/uploads" 2>/dev/null || true
@@ -91,5 +72,5 @@ cat <<EOF
     Mail       http://localhost:8025
     Database   127.0.0.1:13306  wordpress / wordpress
 
-  Your repo is mounted live — edit in the IDE, refresh the browser.
+  The site folder is mounted live — edit in the IDE, refresh the browser.
 EOF

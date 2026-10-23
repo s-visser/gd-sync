@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/s-visser/gd-sync/internal/remote/sshtest"
+	"github.com/s-visser/gd-sync/internal/scaffold"
+	"github.com/s-visser/gd-sync/internal/site"
 	"github.com/s-visser/gd-sync/internal/ui"
 )
 
@@ -96,7 +98,7 @@ func (w *world) git(args ...string) string {
 
 func (w *world) gd(args ...string) error {
 	w.t.Helper()
-	defer func() { ui.Yes = false }()
+	defer func() { ui.Yes, noMirror = false, false }()
 	return run(append(args, "-y"))
 }
 
@@ -333,4 +335,134 @@ func TestAstroDeploy(t *testing.T) {
 	if w.read(w.server, ".htaccess") != "keep me\n" {
 		t.Error("deploy removed a file it never put there")
 	}
+}
+
+// useScaffoldGitignore swaps the test's .gitignore for the one gd-sync
+// writes for these maintained paths, and commits it.
+func (w *world) useScaffoldGitignore(tracked ...string) {
+	w.t.Helper()
+	if err := scaffold.Gitignore(&site.Site{Repo: w.repo, Type: "wordpress", Tracked: tracked}); err != nil {
+		w.t.Fatal(err)
+	}
+	w.git("add", "-A")
+	w.git("commit", "-qm", "gitignore")
+}
+
+func (w *world) mtime(root, rel string) int64 {
+	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+	if err != nil {
+		return -1
+	}
+	return st.ModTime().Unix()
+}
+
+// Sync copies the whole live site into the folder so it runs locally, while
+// git — and main — only ever see the maintained paths.
+func TestSyncMirrorsWholeSite(t *testing.T) {
+	w := newWorld(t, "wordpress", "wp-content/plugins/mine", "")
+	w.useScaffoldGitignore("wp-content/plugins/mine")
+	w.write(w.server, "wp-content/plugins/mine/m.php", "mine\n")
+	w.write(w.server, "wp-content/plugins/other/o.php", "other\n")
+	w.write(w.server, "wp-content/themes/t/style.css", "body{}\n")
+	w.write(w.server, "wp-content/uploads/x.jpg", "img")
+	w.write(w.server, "wp-includes/version.php", "core\n")
+	w.write(w.server, "wp-config.php", "live secrets\n")
+	w.write(w.server, ".htaccess", "live rules\n")
+	w.write(w.server, "README.md", "the server's readme\n")
+	w.write(w.server, "error_log", "noise\n")
+	w.write(w.server, "wp-content/cache/page.html", "cached\n")
+	w.write(w.repo, "README.md", "the repo's readme\n")
+	w.write(w.repo, "_db/dump.sql", "local dump\n")
+	w.git("add", "README.md")
+	w.git("commit", "-qm", "readme")
+	w.git("branch", "develop")
+	w.git("checkout", "-q", "develop")
+
+	w.mustGD("sync")
+	if files := w.git("ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "other") || !strings.Contains(files, "wp-content/plugins/mine/m.php") {
+		t.Errorf("main should hold exactly the maintained paths:\n%s", files)
+	}
+	for rel, want := range map[string]string{
+		"wp-content/plugins/other/o.php": "other\n",
+		"wp-content/themes/t/style.css":  "body{}\n",
+		"wp-content/uploads/x.jpg":       "img",
+		"wp-includes/version.php":        "core\n",
+		"wp-config.php":                  "live secrets\n",
+		".htaccess":                      "live rules\n",
+		"README.md":                      "the repo's readme\n",
+		"_db/dump.sql":                   "local dump\n",
+		"error_log":                      "<missing>",
+		"wp-content/cache/page.html":     "<missing>",
+	} {
+		if got := w.read(w.repo, rel); got != want {
+			t.Errorf("%s = %q, want %q", rel, got, want)
+		}
+	}
+	// A maintained path reaches develop by merging main, never via the mirror.
+	if w.read(w.repo, "wp-content/plugins/mine/m.php") != "<missing>" {
+		t.Error("the mirror wrote into a maintained path")
+	}
+	if st := w.git("status", "--porcelain"); st != "" {
+		t.Errorf("the mirror left git with changes:\n%s", st)
+	}
+	if w.mtime(w.repo, "wp-content/themes/t/style.css") != w.mtime(w.server, "wp-content/themes/t/style.css") {
+		t.Error("mirrored files should carry the server's mtime")
+	}
+
+	// Unchanged files are not downloaded again: a local edit that kept the
+	// size and mtime survives.
+	css := filepath.Join(w.repo, "wp-content/themes/t/style.css")
+	mt := time.Unix(w.mtime(w.repo, "wp-content/themes/t/style.css"), 0)
+	os.WriteFile(css, []byte("BODY{}\n"), 0o644)
+	os.Chtimes(css, mt, mt)
+	w.write(w.server, "wp-content/uploads/x.jpg", "new img")
+	os.Remove(filepath.Join(w.server, "wp-content/plugins/other/o.php"))
+	w.write(w.repo, "wp-content/plugins/local-only/l.php", "never on the server\n")
+
+	w.mustGD("sync")
+	if got := w.read(w.repo, "wp-content/themes/t/style.css"); got != "BODY{}\n" {
+		t.Errorf("an unchanged file was downloaded again: %q", got)
+	}
+	if got := w.read(w.repo, "wp-content/uploads/x.jpg"); got != "new img" {
+		t.Errorf("a changed server file was not updated: %q", got)
+	}
+	if w.read(w.repo, "wp-content/plugins/other/o.php") != "<missing>" {
+		t.Error("a file deleted on the server is still in the local copy")
+	}
+	if _, err := os.Stat(filepath.Join(w.repo, "wp-content/plugins/other")); err == nil {
+		t.Error("an emptied folder was left behind")
+	}
+	if w.read(w.repo, "wp-content/plugins/local-only/l.php") == "<missing>" {
+		t.Error("the mirror deleted a file it never placed")
+	}
+
+	// --no-mirror, as the workers run it, leaves the local copy alone.
+	w.write(w.server, "wp-content/uploads/y.jpg", "y")
+	w.mustGD("sync", "--no-mirror")
+	if w.read(w.repo, "wp-content/uploads/y.jpg") != "<missing>" {
+		t.Error("--no-mirror still mirrored")
+	}
+}
+
+// With nothing maintained, main holds only gd-sync's files and the whole
+// site is the local copy.
+func TestSyncWithNothingMaintained(t *testing.T) {
+	w := newWorld(t, "wordpress", "", "")
+	w.useScaffoldGitignore()
+	w.write(w.server, "wp-content/plugins/a/a.php", "a\n")
+	w.write(w.server, "index.php", "core\n")
+	head := w.git("rev-parse", "main")
+
+	w.mustGD("sync")
+	if w.git("rev-parse", "main") != head {
+		t.Error("main changed with nothing maintained")
+	}
+	if w.read(w.repo, "wp-content/plugins/a/a.php") != "a\n" || w.read(w.repo, "index.php") != "core\n" {
+		t.Error("the site was not copied locally")
+	}
+	if st := w.git("status", "--porcelain"); st != "" {
+		t.Errorf("git sees the local copy:\n%s", st)
+	}
+	w.mustGD("status")
+	w.mustGD("deploy")
 }

@@ -121,9 +121,17 @@ func compose(c *ctx, args ...string) error {
 	return cmd.Run()
 }
 
+// cmdUp starts the devcontainer. The first time, it also runs the setup an
+// IDE would: import the newest dump, rewrite URLs, create the dev admin.
 func cmdUp(c *ctx) error {
 	if err := compose(c, "up", "-d"); err != nil {
 		return err
+	}
+	if c.s.Type == "wordpress" && compose(c, "exec", "-T", "workspace", "wp", "--path=/var/www/html", "core", "is-installed") != nil {
+		ui.Step("First start — setting up the local site")
+		if err := compose(c, "exec", "-T", "workspace", "bash", ".devcontainer/post-create.sh"); err != nil {
+			return err
+		}
 	}
 	ui.OK("%s is up — %s", c.s.Name, c.s.LocalURL)
 	return nil

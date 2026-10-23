@@ -13,8 +13,15 @@ _db/
 .gd-sync.local
 `
 
-const gitignoreWordPress = `# WordPress core and anything we do not author — this is what stops core
-# updates from ever making this repo "outdated".
+// gitignoreScaffold is what every WordPress repo commits besides the paths
+// you maintain: gd-sync's own files. Everything else in the folder is the
+// local mirror of the live site.
+var gitignoreScaffold = []string{
+	".gitignore", ".gitattributes", ".gd-sync", ".devcontainer/", ".github/", ".run/", "GD-SYNC.md", "README.md",
+}
+
+// gitignoreNever stays out of git even inside a path you maintain.
+const gitignoreNever = `# Never committed, even inside a maintained path.
 /wp-admin/
 /wp-includes/
 /wp-*.php
@@ -28,8 +35,7 @@ wp-content/cache/
 wp-content/upgrade/
 wp-content/backup*/
 wp-content/*.log
-wp-content/debug.log
-
+error_log
 .idea/
 .vscode/
 .DS_Store
@@ -49,11 +55,15 @@ const cheatSheet = "# Working on this site\n\n" +
 	"This project is managed by **gd-sync**. Run gd-sync from anywhere inside this folder —\n" +
 	"it works out which site you mean, the way git does.\n\n" +
 	"## The one rule\n\n" +
-	"The live server is the source of truth. `main` mirrors the server.\n" +
-	"You work on `develop`. Never edit files on the server by hand if you can help it.\n\n" +
+	"The live server is the source of truth. `main` mirrors the server's copy of the\n" +
+	"paths you maintain (`TRACKED` in `.gd-sync`). You work on `develop`. Never edit\n" +
+	"files on the server by hand if you can help it.\n\n" +
+	"The rest of the live site — WordPress core, other plugins and themes, uploads — is\n" +
+	"copied into this folder too, so the site runs locally. Git ignores all of it, and\n" +
+	"`gd-sync sync` keeps it current.\n\n" +
 	"## A normal session\n\n" +
 	"```\n" +
-	"gd-sync sync        # pull the server's current state onto main\n" +
+	"gd-sync sync        # pull the server's current state onto main and locally\n" +
 	"gd-sync db          # pull the live database (WordPress sites)\n" +
 	"gd-sync up          # start the local site in Docker\n" +
 	"                    # ... work on develop ...\n" +
@@ -64,7 +74,7 @@ const cheatSheet = "# Working on this site\n\n" +
 	"## Commands\n\n" +
 	"| | |\n" +
 	"|---|---|\n" +
-	"| `gd-sync sync` | update `main` with what's on the server right now |\n" +
+	"| `gd-sync sync` | update `main` and the local copy with what's on the server right now |\n" +
 	"| `gd-sync status` | what differs between the server and `main` (changes nothing) |\n" +
 	"| `gd-sync db` | download the live database into `_db/` |\n" +
 	"| `gd-sync up` / `gd-sync down` | start / stop the local Docker site |\n" +
@@ -76,9 +86,10 @@ const cheatSheet = "# Working on this site\n\n" +
 	"| | |\n" +
 	"|---|---|\n" +
 	"| `.gd-sync` | this site's config — committed, also read by the GitHub workers |\n" +
+	"| `.gitignore` | generated from `TRACKED` — run `gd-sync scaffold` after changing it |\n" +
 	"| `.gd-sync.local` | your SSH details — not committed |\n" +
 	"| `_db/` | database dumps — not committed |\n" +
-	"| `.devcontainer/` | the local Docker environment |\n" +
+	"| `.devcontainer/` | the local Docker environment, with a local `wp-config.php` and `.htaccess` |\n" +
 	"| `.github/workflows/` | the sync and deploy workers |\n\n" +
 	"## If something looks wrong\n\n" +
 	"`gd-sync status` shows the difference without touching anything.\n\n" +
@@ -89,7 +100,8 @@ const cheatSheet = "# Working on this site\n\n" +
 	"git clone <this repo>\n" +
 	"cd <folder> && gd-sync adopt\n" +
 	"```\n\n" +
-	"`gd-sync adopt` asks for the SSH details, since those aren't committed.\n"
+	"`gd-sync adopt` asks for the SSH details, since those aren't committed. Then\n" +
+	"`gd-sync sync` brings in the rest of the site.\n"
 
 // readme takes the domain, live URL, local URL and stack.
 const readme = `# %s

@@ -2,7 +2,9 @@
 
 Git-backed maintenance for GoDaddy cPanel sites you touch once a year.
 
-**The server is the source of truth.** `main` mirrors it. You work on `develop`.
+**The server is the source of truth.** `main` mirrors the paths you maintain.
+You work on `develop`. The rest of the live site is copied into the same folder
+so it runs locally, but git ignores it.
 Nothing merges into `main` until `main` has been refreshed from the live server,
 and anything that lands on `main` gets deployed.
 
@@ -43,9 +45,9 @@ works from PowerShell, cmd or Windows Terminal. gd-sync sets each site repo to
 keep the server's line endings exactly, so files never get converted to CRLF
 on the way through.
 
-Docker Desktop reaches folders on `C:\` more slowly than its own disk. The
-WordPress devcontainer only mounts your tracked paths, so this stays bearable;
-WordPress core lives in a Docker volume.
+Docker Desktop reaches folders on `C:\` more slowly than its own disk, and the
+WordPress devcontainer serves the whole site from the folder, so the local
+site is slower there than on macOS or Linux.
 
 ## Global settings
 
@@ -76,8 +78,14 @@ gd-sync new
 Asks for the domain, short name, local folder, GitHub repo, site type, and the
 SSH details. Then it creates the folder and repo, writes the config, installs
 the devcontainer and the three workflows, tests SSH, offers to install your SSH
-key, pulls the live files onto `main`, offers to pull the database, branches
-`develop`, creates the GitHub repo and sets the deploy secrets.
+key, pulls the paths you maintain onto `main`, copies the rest of the live site
+into the folder, offers to pull the database, branches `develop`, creates the
+GitHub repo and sets the deploy secrets.
+
+It asks which paths you maintain: the plugins and themes you write, e.g.
+`wp-content/plugins/acme-custom`. Leave it empty to start with none. You can
+add them later to `TRACKED` in `.gd-sync`; run `gd-sync scaffold` afterwards so
+`.gitignore` follows.
 
 Already have a folder with a `.gd-sync` in it — a clone on another computer, say?
 
@@ -92,7 +100,7 @@ It asks only for the connection details, which are deliberately not committed.
 Run these from anywhere inside a site folder.
 
 ```bash
-gd-sync sync       # main := the live server
+gd-sync sync       # main := the live server; refresh the local copy
 gd-sync merge      # sync, merge develop, go live   ← the normal one
 gd-sync status     # what's drifted (read-only)
 gd-sync db         # live database -> _db/, imported into the container
@@ -119,6 +127,20 @@ There is no central site list. Each repo carries its own:
 something to walk. Delete it and nothing breaks; `gd-sync adopt` rebuilds entries.
 
 ---
+
+## What's in a site folder
+
+The folder is the live web root, plus gd-sync's own files:
+
+| | in git? |
+|---|---|
+| the paths you maintain (`TRACKED`) | yes — on `main` as the server has them, on `develop` as you change them |
+| `.gd-sync`, `.gitignore`, `.devcontainer/`, `.github/`, `.run/`, `README.md`, `GD-SYNC.md` | yes |
+| everything else: WordPress core, other plugins and themes, uploads, `wp-config.php` | no — the local copy |
+
+`.gitignore` is generated from `TRACKED`: it ignores everything, then lets back
+in gd-sync's files and each maintained path. With nothing maintained, git holds
+only gd-sync's files.
 
 ## The loop
 
@@ -157,6 +179,14 @@ SSH connection.
   sync, hash them, and compare with `main`, so a file that was touched but not
   changed never shows up. What the server held is remembered per machine in
   `.git/gd-sync/server`.
+- **sync** then refreshes the local copy of the rest of the site. It downloads
+  a file when its size or date differs from the local one, and stamps it with
+  the server's date. It only ever writes files git ignores, so it can't touch
+  your work. A local file is only deleted when the server no longer has it,
+  gd-sync put it there, and it's unchanged since — that list lives in
+  `.git/gd-sync/mirror`. Server logs (`error_log`, `*.log`) and
+  `wp-content/cache` are skipped. `--no-mirror` updates `main` only; the
+  GitHub workers use it, and `gd-sync merge` skips the copy too.
 - **deploy** looks at what changed in `main` since the last commit known to be
   live — the last deploy, which is recorded on the server in `~/.gd-sync/`, or
   the last `[server-sync]` snapshot. For each of those files it checks what the
@@ -184,15 +214,21 @@ The GitHub workers run the same gd-sync commands, so they follow the same rules.
 `wordpress:php8.3-apache` + MariaDB 11 + Mailpit, plus a PHP workspace container
 with WP-CLI, Composer and the mysql client.
 
-- Your tracked plugins and themes are bind-mounted into place — edit in the IDE,
-  refresh the browser.
+- It serves the site folder itself — the paths you maintain plus the local copy
+  of everything else, so core, plugins and themes are the live versions. Edit
+  in the IDE, refresh the browser.
+- `wp-config.php` and `.htaccess` are replaced, inside the container only, by
+  local versions in `.devcontainer/`: the live ones hold the live database
+  password, and may force HTTPS or load server-only firewall files. The local
+  `wp-config.php` reads the live one for its table prefix.
 - On first start it imports the newest dump from `_db/`, rewrites the live URL
   to `localhost:8080`, creates a `dev`/`dev` admin, and deactivates caching and
   security plugins that fight local dev.
 - All outgoing mail is captured at localhost:8025. This matters more than it
   sounds: a restored production database will happily email real customers the
   moment a plugin fires.
-- WordPress core lives in a Docker volume, not the repo.
+- Before the first `gd-sync sync` there's no copy yet, and the wordpress image
+  unpacks a stock core into the folder instead.
 
 | | |
 |---|---|
@@ -235,10 +271,12 @@ read access to the gd-sync repository's contents.
 destroys every order, comment and form entry submitted since you pulled.
 Content changes belong on the live site. `gd-sync db` is one-directional on purpose.
 
-**Uploads aren't tracked.** `wp-content/uploads` is excluded everywhere. It's
-large, it changes through the admin, and it isn't code.
+**Uploads aren't tracked.** `wp-content/uploads` never goes into git or up in a
+deploy, even inside a maintained path. It's large, it changes through the
+admin, and it isn't code. The local copy has it, so images work locally.
 
-**`wp-config.php` is never touched.** It holds the live DB credentials and salts.
+**`wp-config.php` is never touched.** It holds the live DB credentials and
+salts. The local copy has it, git doesn't, and no deploy sends it.
 
 ## Backups
 

@@ -77,6 +77,8 @@ which publishes archives for Windows, macOS and Linux on amd64 and arm64.
   shell, Perl, GNU tar, `xargs -0`.
 - **Paths are slash-separated** in manifests, state and tar streams. Convert with
   `filepath.FromSlash` only where a local file is opened.
+- **The local copy only writes what git ignores.** It's a convenience for running
+  the site; it must never be able to change a commit, a deploy or your work.
 - **Server bytes are never rewritten.** Repos get `core.autocrlf=false` and a
   `* -text` `.gitattributes`; deploys read from git objects, not the working tree.
 

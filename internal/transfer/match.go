@@ -22,10 +22,20 @@ var DefaultExcludes = []string{
 	"wp-content/cache", "wp-content/uploads",
 }
 
+// MirrorExcludes are never copied into the local mirror of the whole site:
+// the repo's own files at the top, git folders, caches and server logs.
+// Uploads are mirrored, so the local site has its images.
+var MirrorExcludes = []string{
+	"/.github", "/.devcontainer", "/.gd-sync", "/.gd-sync.local", "/.gitignore", "/.gitattributes",
+	"/.idea", "/.vscode", "/.run", "/_db", "/README.md", "/GD-SYNC.md",
+	".git", ".DS_Store", "*.log", "error_log", "wp-content/cache",
+}
+
 // Matcher decides which paths belong to a transfer: those under one of the
 // roots and not excluded. Excludes follow rsync: a pattern matches a whole
-// name or a trailing run of path components, and * and ? never cross a slash.
-// The Perl lister on the server applies the same rules.
+// name or a trailing run of path components, a leading / anchors it to the
+// top, and * and ? never cross a slash. The Perl lister on the server
+// applies the same rules.
 type Matcher struct {
 	roots    []string
 	excludes []string
@@ -35,10 +45,14 @@ type Matcher struct {
 func NewMatcher(roots, excludes []string) Matcher {
 	m := Matcher{roots: roots, excludes: excludes}
 	for _, e := range excludes {
+		start := `(?:^|/)`
+		if strings.HasPrefix(e, "/") {
+			e, start = e[1:], `^`
+		}
 		r := regexp.QuoteMeta(e)
 		r = strings.ReplaceAll(r, `\*`, `[^/]*`)
 		r = strings.ReplaceAll(r, `\?`, `[^/]`)
-		m.res = append(m.res, regexp.MustCompile(`(?:^|/)`+r+`$`))
+		m.res = append(m.res, regexp.MustCompile(start+r+`$`))
 	}
 	return m
 }
@@ -88,7 +102,7 @@ func (m Matcher) listerArgs() []string {
 // in them are reported on stderr and skipped.
 const lister = `use strict; use warnings; use File::Find;
 my $n = shift @ARGV; my @roots = splice @ARGV, 0, $n;
-my @ex = map { my $r = quotemeta; $r =~ s/\\\*/[^\/]*/g; $r =~ s/\\\?/[^\/]/g; qr{(?:^|/)$r$} } @ARGV;
+my @ex = map { my $top = s{^/}{}; my $r = quotemeta; $r =~ s/\\\*/[^\/]*/g; $r =~ s/\\\?/[^\/]/g; $top ? qr{^$r$} : qr{(?:^|/)$r$} } @ARGV;
 sub skip { my $p = shift; for my $r (@ex) { return 1 if $p =~ $r } 0 }
 sub excluded { my @c = split m{/}, shift; for my $i (1 .. @c) { return 1 if skip(join '/', @c[0 .. $i - 1]) } 0 }
 sub emit {

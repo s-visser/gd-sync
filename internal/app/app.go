@@ -33,7 +33,8 @@ reading that repo's own .gd-sync file. No site name to remember or type.
   gd-sync list            every site gd-sync knows about
   gd-sync config          machine-wide settings (projects folder, GitHub owner)
 
-  gd-sync sync            update main with the CURRENT SERVER CONTENTS
+  gd-sync sync            update main with the CURRENT SERVER CONTENTS, and
+                          the local copy of the rest of the site
   gd-sync merge [branch]  sync main from server, merge branch in, go live
   gd-sync status          what differs between server and main (read-only)
   gd-sync deploy          push main to the server by hand
@@ -47,7 +48,11 @@ reading that repo's own .gd-sync file. No site name to remember or type.
   gd-sync scaffold        regenerate devcontainer + workflows + run configs
 
 Add --all to sync/status/db to run every registered site.
-Add -y to answer yes to every question.`
+Add -y to answer yes to every question.
+Add --no-mirror to sync to update main only, leaving the local copy alone.`
+
+// noMirror is --no-mirror: sync updates main only. The GitHub workers use it.
+var noMirror bool
 
 // Main runs gd-sync with the given arguments and returns the exit code.
 func Main(args []string) int {
@@ -64,9 +69,12 @@ func Main(args []string) int {
 func run(args []string) error {
 	var rest []string
 	for _, a := range args {
-		if a == "-y" || a == "--yes" {
+		switch a {
+		case "-y", "--yes":
 			ui.Yes = true
-		} else {
+		case "--no-mirror":
+			noMirror = true
+		default:
 			rest = append(rest, a)
 		}
 	}
@@ -130,6 +138,7 @@ type ctx struct {
 
 	stashed    bool
 	keepBranch bool // sync stays on main, for merge
+	noMirror   bool // sync leaves the local copy of the site alone
 	work       []string
 }
 
@@ -148,7 +157,7 @@ func inSite(cfg *config.Global, dir string, fn func(*ctx) error) error {
 	if err != nil {
 		return err
 	}
-	c := &ctx{cfg: cfg, s: s, git: gitx.Repo{Dir: s.Repo}}
+	c := &ctx{cfg: cfg, s: s, git: gitx.Repo{Dir: s.Repo}, noMirror: noMirror}
 	defer c.close()
 	return fn(c)
 }

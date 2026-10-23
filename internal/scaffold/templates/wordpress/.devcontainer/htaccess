@@ -1,0 +1,17 @@
+# The local site's .htaccess. The devcontainer mounts it over the live one,
+# which may force HTTPS or load server-only files. Written by gd-sync.
+
+# The repo's own files are not part of the site.
+RedirectMatch 404 ^/(\.git|\.gd-sync|\.devcontainer|\.github|_db)(/|$)
+
+# BEGIN WordPress
+<IfModule mod_rewrite.c>
+RewriteEngine On
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
+RewriteBase /
+RewriteRule ^index\.php$ - [L]
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule . /index.php [L]
+</IfModule>
+# END WordPress

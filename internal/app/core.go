@@ -17,20 +17,31 @@ import (
 
 func stamp(layout string) string { return time.Now().Format(layout) }
 
-// cmdSync makes main equal to the live server and commits that as a
-// [server-sync] snapshot.
+// cmdSync makes main equal to the live server's maintained paths, commits
+// that as a [server-sync] snapshot, then refreshes the local copy of the
+// rest of the site.
 func cmdSync(c *ctx) error {
 	if c.s.Type == "astro" {
 		ui.Info("%s is a static Astro site — the repo is the source, nothing to pull back.", c.s.Name)
 		return nil
 	}
-	if len(c.s.Tracked) == 0 {
-		return fmt.Errorf("%s has no TRACKED paths in .gd-sync", c.s.Name)
-	}
 	conn, err := c.server()
 	if err != nil {
 		return err
 	}
+	if len(c.s.Tracked) == 0 {
+		ui.Info("%s has no maintained paths (TRACKED in .gd-sync) — main holds only gd-sync's files", c.s.Name)
+	} else if err := c.syncMain(conn); err != nil {
+		return err
+	}
+	if c.noMirror {
+		return nil
+	}
+	return c.mirror(conn)
+}
+
+// syncMain is the snapshot half of cmdSync.
+func (c *ctx) syncMain(conn *remote.Conn) error {
 	gitSettings(c.git)
 
 	back := c.git.CurrentBranch()
@@ -137,6 +148,7 @@ func cmdMerge(c *ctx, from string) error {
 
 	ui.Step("Step 1 of 3 — refreshing main from the live server")
 	c.keepBranch = true
+	c.noMirror = true
 	if err := cmdSync(c); err != nil {
 		return err
 	}

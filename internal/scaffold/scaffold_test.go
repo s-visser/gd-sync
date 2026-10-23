@@ -2,6 +2,7 @@ package scaffold
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,14 +30,18 @@ func TestAllWordPress(t *testing.T) {
 
 	dc := read(".devcontainer/docker-compose.yml")
 	for _, want := range []string{
-		"- ../wp-content/plugins/acme-custom:/var/www/html/wp-content/plugins/acme-custom:cached",
-		"- ../wp-content/themes/acme:/var/www/html/wp-content/themes/acme:cached",
+		"- ..:/var/www/html:cached",
+		"- ./wp-config.local.php:/var/www/html/wp-config.php:ro",
+		"- ./htaccess:/var/www/html/.htaccess:ro",
 	} {
 		if !strings.Contains(dc, want) {
 			t.Errorf("docker-compose.yml lacks %q", want)
 		}
 	}
-	if strings.Contains(dc, "__TRACKED_MOUNTS__") || strings.Contains(read(".devcontainer/devcontainer.json"), "__SITE__") {
+	if !strings.Contains(read(".devcontainer/wp-config.local.php"), "DB_HOST', 'db'") {
+		t.Error("no local wp-config.php")
+	}
+	if strings.Contains(read(".devcontainer/devcontainer.json"), "__SITE__") {
 		t.Error("placeholders left in the devcontainer")
 	}
 	if !strings.Contains(read(".devcontainer/devcontainer.json"), `"acme (WordPress)"`) {
@@ -84,6 +89,72 @@ func TestEmbeddedTemplatesIncludeDotFolders(t *testing.T) {
 	for _, p := range []string{"wordpress/.devcontainer/post-create.sh", "astro/.devcontainer/Dockerfile"} {
 		if _, err := embedded.Open("templates/" + p); err != nil {
 			t.Errorf("%s not embedded: %v", p, err)
+		}
+	}
+}
+
+// The folder holds the whole live site. Git must see only gd-sync's files
+// and the paths you maintain — or only gd-sync's files, with none.
+func TestGitignoreKeepsOnlyMaintainedPaths(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("needs git")
+	}
+	scaffolding := []string{
+		".gitignore", ".gitattributes", ".gd-sync", ".devcontainer/docker-compose.yml",
+		".github/workflows/deploy.yml", ".run/x.run.xml", "GD-SYNC.md", "README.md",
+	}
+	mirror := []string{
+		"index.php", "wp-config.php", ".htaccess", "wp-includes/version.php", "wp-admin/a.php",
+		"wp-content/plugins/akismet/akismet.php", "wp-content/themes/genesis/style.css",
+		"wp-content/uploads/2024/x.jpg", "wp-content/index.php", "maps/sitemap.xml",
+		"wp-content/themes/acme-old/style.css", "wp-content/plugins/acme custom2/x.php",
+		".gd-sync.local", "_db/dump.sql",
+	}
+	for _, c := range []struct {
+		tracked    []string
+		maintained []string
+		ignoredToo []string // inside a maintained path, still never committed
+	}{
+		{
+			tracked:    []string{"wp-content/plugins/acme custom", "wp-content/themes/acme", "robots.txt", "wp-content/themes/acme/inc"},
+			maintained: []string{"wp-content/plugins/acme custom/x.php", "wp-content/themes/acme/style.css", "wp-content/themes/acme/inc/a.php", "robots.txt"},
+			ignoredToo: []string{"wp-content/themes/acme/node_modules/m.js", "wp-content/plugins/acme custom/debug.log"},
+		},
+		{tracked: nil},
+	} {
+		dir := t.TempDir()
+		if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v\n%s", err, out)
+		}
+		s := &site.Site{Repo: dir, Name: "acme", Type: "wordpress", Tracked: c.tracked}
+		if err := Gitignore(s); err != nil {
+			t.Fatal(err)
+		}
+		all := append(append(append(append([]string{}, scaffolding...), mirror...), c.maintained...), c.ignoredToo...)
+		for _, f := range all {
+			p := filepath.Join(dir, filepath.FromSlash(f))
+			os.MkdirAll(filepath.Dir(p), 0o755)
+			if f != ".gitignore" {
+				os.WriteFile(p, []byte("x"), 0o644)
+			}
+		}
+		out, err := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]bool{}
+		for _, f := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			seen[f] = true
+		}
+		for _, f := range append(append([]string{}, scaffolding...), c.maintained...) {
+			if !seen[f] {
+				t.Errorf("tracked=%q: git ignores %s, which it should keep", c.tracked, f)
+			}
+		}
+		for _, f := range append(append([]string{}, mirror...), c.ignoredToo...) {
+			if seen[f] {
+				t.Errorf("tracked=%q: git sees %s, which belongs to the mirror", c.tracked, f)
+			}
 		}
 	}
 }

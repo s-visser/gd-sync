@@ -8,12 +8,11 @@ services:
       dockerfile: Dockerfile
     volumes:
       - ..:/workspace:cached
-      - wp-core:/var/www/html
+      - ..:/var/www/html:cached
+      - ./wp-config.local.php:/var/www/html/wp-config.php:ro
+      - ./htaccess:/var/www/html/.htaccess:ro
+      - ..:/gd-sync/site:ro
     environment:
-      WORDPRESS_DB_HOST: db
-      WORDPRESS_DB_NAME: wordpress
-      WORDPRESS_DB_USER: wordpress
-      WORDPRESS_DB_PASSWORD: wordpress
       LOCAL_URL: ${LOCAL_URL:-http://localhost:8080}
       LIVE_URL: ${LIVE_URL:-}
     working_dir: /workspace
@@ -28,25 +27,18 @@ services:
     ports:
       - "${WP_PORT:-8080}:80"
     environment:
-      WORDPRESS_DB_HOST: db
-      WORDPRESS_DB_NAME: wordpress
-      WORDPRESS_DB_USER: wordpress
-      WORDPRESS_DB_PASSWORD: wordpress
-      WORDPRESS_DEBUG: 1
-      WORDPRESS_CONFIG_EXTRA: |
-        define('WP_DEBUG_LOG', true);
-        define('WP_DEBUG_DISPLAY', false);
-        define('DISALLOW_FILE_EDIT', true);
-        define('AUTOMATIC_UPDATER_DISABLED', true);
-        define('WP_ENVIRONMENT_TYPE', 'local');
-        /* send all mail to Mailpit instead of the outside world */
-        define('WP_MAIL_SMTP_HOST', 'mailpit');
-        define('WP_MAIL_SMTP_PORT', 1025);
+      LOCAL_URL: ${LOCAL_URL:-http://localhost:8080}
     volumes:
-      - wp-core:/var/www/html
-      # Your tracked code, bind-mounted straight from the repo — edit in the IDE,
-      # refresh the browser, no rebuild. Regenerate with: gd-sync scaffold <site>
-      # __TRACKED_MOUNTS__
+      # The whole site, straight from the repo's folder: the paths you maintain
+      # plus gd-sync's local copy of everything else. Edit in the IDE, refresh
+      # the browser, no rebuild.
+      - ..:/var/www/html:cached
+      # Local stand-ins for the two files that only work on the server. The
+      # live ones stay untouched in the folder; this one reads the live
+      # wp-config.php for its table prefix.
+      - ./wp-config.local.php:/var/www/html/wp-config.php:ro
+      - ./htaccess:/var/www/html/.htaccess:ro
+      - ..:/gd-sync/site:ro
     depends_on:
       db:
         condition: service_healthy
@@ -79,5 +71,4 @@ services:
       - "${MAIL_PORT:-8025}:8025"
 
 volumes:
-  wp-core:
   db-data:
