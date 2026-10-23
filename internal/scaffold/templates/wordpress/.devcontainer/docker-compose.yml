@@ -31,6 +31,10 @@ services:
     environment:
       LOCAL_URL: ${LOCAL_URL:-http://localhost:8080}
       LIVE_URL: ${LIVE_URL:-}
+      # The ports on your computer (port, db_port, mail_port in .gd-sync.toml),
+      # for post-create.sh to show.
+      DB_PORT: ${DB_PORT:-13306}
+      MAIL_PORT: ${MAIL_PORT:-8025}
       # Tells gd-sync it runs inside the devcontainer.
       GD_SYNC_CONTAINER: "1"
       # gh keeps its login on the shared volume, whatever XDG_CONFIG_HOME the
@@ -84,7 +88,7 @@ services:
       timeout: 5s
       retries: 20
 
-  # Catches every email the site sends. Open http://localhost:8025
+  # Catches every email the site sends. Open http://localhost:<mail_port>
   mailpit:
     image: axllent/mailpit:latest
     restart: unless-stopped

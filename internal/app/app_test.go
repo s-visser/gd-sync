@@ -1,12 +1,14 @@
 package app
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -682,5 +684,28 @@ func TestNewLeavesTheFirstCommitToYou(t *testing.T) {
 	w.mustGD("deploy")
 	if now, _ := git("rev-parse", "HEAD"); now != head {
 		t.Error("sync after the first commit found differences")
+	}
+}
+
+// A new site gets ports no registered site uses, so both run at once.
+func TestFreePorts(t *testing.T) {
+	t.Setenv("GD_SYNC_REGISTRY", filepath.Join(t.TempDir(), "repos"))
+	first := &site.Site{Repo: t.TempDir(), Name: "first", Type: "wordpress"}
+	freePorts(first)
+	if err := first.Write(); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.RegistryAdd(first.Repo); err != nil {
+		t.Fatal(err)
+	}
+	second := &site.Site{Repo: t.TempDir(), Name: "second", Type: "wordpress"}
+	freePorts(second)
+	for _, p := range second.Ports() {
+		if slices.Contains(first.Ports(), p) {
+			t.Errorf("second site %v shares a port with the first %v", second.Ports(), first.Ports())
+		}
+	}
+	if second.LocalURL != fmt.Sprintf("http://localhost:%d", second.Port) {
+		t.Errorf("local_url %s doesn't follow port %d", second.LocalURL, second.Port)
 	}
 }

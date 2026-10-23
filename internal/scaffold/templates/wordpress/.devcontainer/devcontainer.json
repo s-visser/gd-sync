@@ -7,11 +7,11 @@
 
   "initializeCommand": "docker volume create gd-sync-gh",
 
-  "forwardPorts": [8080, 8025, 13306],
+  "forwardPorts": [__PORT__, __MAIL_PORT__, __DB_PORT__],
   "portsAttributes": {
-    "8080":  { "label": "WordPress", "onAutoForward": "notify" },
-    "8025":  { "label": "Mailpit (all outgoing email lands here)" },
-    "13306": { "label": "MariaDB" }
+    "__PORT__": { "label": "WordPress", "onAutoForward": "notify" },
+    "__MAIL_PORT__": { "label": "Mailpit (all outgoing email lands here)" },
+    "__DB_PORT__": { "label": "MariaDB" }
   },
 
   "postCreateCommand": "bash .devcontainer/post-create.sh",

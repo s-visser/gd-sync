@@ -36,9 +36,9 @@ fi
 cat <<EOF
 
   Ready.
-    Dev server   npm run dev -- --host 0.0.0.0     -> http://localhost:4321
+    Dev server   npm run dev -- --host 0.0.0.0     -> ${LOCAL_URL:-http://localhost:4321}
     Real build   npm run build                      -> ./dist
-    Preview it   npm run preview -- --host 0.0.0.0 --port 4322
+    Preview it   npm run preview -- --host 0.0.0.0 --port 4322  -> http://localhost:${PREVIEW_PORT:-4322}
     $GH_NOTE
 
   Deploys ship ./dist to the server's web root. Push to main and the

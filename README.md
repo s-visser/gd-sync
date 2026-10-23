@@ -155,7 +155,11 @@ name = "wolfpackvision.com"
 type = "wordpress"
 
 live_url = "https://wolfpackvision.com"
-local_url = "http://localhost:8080"
+
+# The ports the local site takes on this computer
+port = 8080
+db_port = 13306  # MariaDB
+mail_port = 8025  # Mailpit
 
 remote_root = "/home/you/public_html/wolfpackvision.com"
 
@@ -166,6 +170,12 @@ exclude = []
 
 php_version = "8.5"
 ```
+
+Every site has its own ports, so several run at once: `gd-sync new` picks ones no
+other site uses. To move a site, change `port`. `db_port` and `mail_port` (or
+`preview_port` for Astro) move along with it unless you set them yourself. Then
+run `gd-sync scaffold` and rebuild the devcontainer. You only need `local_url`
+when the local site isn't on `localhost`.
 
 `~/.config/gd-sync/repos` is only a list of folders, so `gd-sync list` and `--all` have
 something to walk. Delete it and nothing breaks; `gd-sync adopt` rebuilds entries.
@@ -298,7 +308,7 @@ with WP-CLI, Composer, the mysql client, git, gh and gd-sync.
   password, and may force HTTPS or load server-only firewall files. The local
   `wp-config.php` reads the live one for its table prefix.
 - On first start it imports the newest dump from `_db/`, rewrites the live URL
-  to `localhost:8080`, creates a `dev`/`dev` admin, and deactivates caching and
+  to `local_url`, creates a `dev`/`dev` admin, and deactivates caching and
   security plugins that fight local dev.
 - All outgoing mail is captured at localhost:8025. This matters more than it
   sounds: a restored production database will happily email real customers the
@@ -312,6 +322,8 @@ with WP-CLI, Composer, the mysql client, git, gh and gd-sync.
 | Admin | http://localhost:8080/wp-admin — `dev` / `dev` |
 | Mail | http://localhost:8025 |
 | MySQL | 127.0.0.1:13306 — `wordpress` / `wordpress` |
+
+Those are the default ports; a site with its own (`port` in `.gd-sync.toml`) uses those instead.
 
 ### gd-sync inside the container
 

@@ -12,6 +12,8 @@ package site
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -39,6 +41,13 @@ type Site struct {
 	LocalURL   string   `toml:"local_url"`
 	Exclude    []string `toml:"exclude"`
 	PHPVersion string   `toml:"php_version"` // what the live site runs, e.g. "8.3"; the devcontainer uses the same
+
+	// The ports the local site takes on this computer. Give every site its own
+	// to run several at once. Defaults fills in what the file leaves out.
+	Port        int `toml:"port"`         // the website
+	DBPort      int `toml:"db_port"`      // wordpress: MariaDB
+	MailPort    int `toml:"mail_port"`    // wordpress: Mailpit
+	PreviewPort int `toml:"preview_port"` // astro: astro preview
 
 	// Inside the tracked paths, but not kept in git the usual way.
 	Ignore []string `toml:"ignore"` // left out of git; the server's copy is never synced or deployed
@@ -132,7 +141,25 @@ func Load(repo string) (*Site, error) {
 	}
 	s.RemoteRoot = strings.TrimSuffix(s.RemoteRoot, "/")
 	s.Defaults()
+	if err := s.checkPorts(); err != nil {
+		return nil, fmt.Errorf("%s: %w", filepath.Join(repo, File), err)
+	}
 	return s, nil
+}
+
+// checkPorts refuses ports that can't work: out of range, or one used twice.
+func (s *Site) checkPorts() error {
+	seen := map[int]bool{}
+	for _, p := range s.Ports() {
+		if p < 1 || p > 65535 {
+			return fmt.Errorf("port %d is not a port number — set port, db_port, mail_port or preview_port to one between 1 and 65535", p)
+		}
+		if seen[p] {
+			return fmt.Errorf("port %d is used twice — every port must differ", p)
+		}
+		seen[p] = true
+	}
+	return nil
 }
 
 func (s *Site) read() error {
@@ -150,24 +177,86 @@ func (s *Site) read() error {
 	return nil
 }
 
+// The ports a site gets when its file names none.
+const (
+	defaultWordPressPort = 8080
+	defaultDBPort        = 13306
+	defaultMailPort      = 8025
+	defaultAstroPort     = 4321
+)
+
 // Defaults fills in what a site type implies when the file leaves it out.
+//
+// Without a port, the site keeps the one in a localhost local_url, as files
+// from before port existed have. The other ports follow port: db_port and
+// mail_port move as far from their defaults as port moves from 8080, and
+// preview_port is the one after port. A local_url on localhost always uses
+// port, so changing port is enough.
 func (s *Site) Defaults() {
-	switch s.Type {
-	case "astro":
+	base := defaultWordPressPort
+	if s.Type == "astro" {
+		base = defaultAstroPort
 		if s.BuildCmd == "" {
 			s.BuildCmd = "npm ci && npm run build"
 		}
 		if s.PublishDir == "" {
 			s.PublishDir = "dist"
 		}
-		if s.LocalURL == "" {
-			s.LocalURL = "http://localhost:4321"
-		}
-	case "wordpress":
-		if s.LocalURL == "" {
-			s.LocalURL = "http://localhost:8080"
+	}
+	if s.Port == 0 {
+		s.Port = base
+		if p := localPort(s.LocalURL); p != 0 {
+			s.Port = p
 		}
 	}
+	if s.LocalURL == "" || localPort(s.LocalURL) != 0 {
+		s.LocalURL = localURL(s.LocalURL, s.Port)
+	}
+	switch s.Type {
+	case "astro":
+		if s.PreviewPort == 0 {
+			s.PreviewPort = s.Port + 1
+		}
+	case "wordpress":
+		if s.DBPort == 0 {
+			s.DBPort = defaultDBPort + s.Port - defaultWordPressPort
+		}
+		if s.MailPort == 0 {
+			s.MailPort = defaultMailPort + s.Port - defaultWordPressPort
+		}
+	}
+}
+
+// Ports are every port the local site takes on this computer.
+func (s *Site) Ports() []int {
+	switch s.Type {
+	case "astro":
+		return []int{s.Port, s.PreviewPort}
+	case "wordpress":
+		return []int{s.Port, s.DBPort, s.MailPort}
+	}
+	return []int{s.Port}
+}
+
+// localPort is the port of a URL on this computer, or 0 when the URL points
+// anywhere else, or names no port.
+func localPort(raw string) int {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Hostname() != "localhost" && u.Hostname() != "127.0.0.1") {
+		return 0
+	}
+	p, _ := strconv.Atoi(u.Port())
+	return p
+}
+
+// localURL is raw, or http://localhost when it's empty, on the given port.
+func localURL(raw string, port int) string {
+	u, err := url.Parse(raw)
+	if raw == "" || err != nil {
+		u = &url.URL{Scheme: "http", Host: "localhost"}
+	}
+	u.Host = net.JoinHostPort(u.Hostname(), strconv.Itoa(port))
+	return u.String()
 }
 
 // Target is user@host, for messages.
@@ -198,7 +287,20 @@ func (s *Site) Write() error {
 	fmt.Fprintf(&b, "name = %s\n", config.String(s.Name))
 	fmt.Fprintf(&b, "type = %s  # \"wordpress\" or \"astro\"\n\n", config.String(s.Type))
 	fmt.Fprintf(&b, "live_url = %s\n", config.String(s.LiveURL))
-	fmt.Fprintf(&b, "local_url = %s\n\n", config.String(s.LocalURL))
+	if localPort(s.LocalURL) == 0 {
+		fmt.Fprintf(&b, "local_url = %s\n", config.String(s.LocalURL))
+	}
+	b.WriteString("\n# The ports the local site takes on this computer. Give every site its own to run\n")
+	b.WriteString("# several at once, then run 'gd-sync scaffold' (and rebuild the devcontainer).\n")
+	fmt.Fprintf(&b, "port = %d\n", s.Port)
+	switch s.Type {
+	case "astro":
+		fmt.Fprintf(&b, "preview_port = %d  # astro preview\n", s.PreviewPort)
+	case "wordpress":
+		fmt.Fprintf(&b, "db_port = %d  # MariaDB\n", s.DBPort)
+		fmt.Fprintf(&b, "mail_port = %d  # Mailpit\n", s.MailPort)
+	}
+	b.WriteString("\n")
 	b.WriteString("# The site's folder on the server\n")
 	fmt.Fprintf(&b, "remote_root = %s\n\n", config.String(s.RemoteRoot))
 	b.WriteString("# The paths you maintain, relative to remote_root. git keeps these; gd-sync\n")

@@ -3,9 +3,12 @@ package app
 import (
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/s-visser/gd-sync/internal/config"
@@ -208,7 +211,8 @@ func cmdNew(g *config.Global) error {
 		ui.Info("Leave empty to start with none — add them to tracked in %s later.", site.File)
 		s.Tracked = strings.Fields(ui.Ask("Maintained paths:", ""))
 	}
-	s.Defaults()
+	freePorts(s)
+	ui.Info("The local site will run at %s (port in %s)", s.LocalURL, site.File)
 
 	// ---- build it -----------------------------------------------------------
 	// Nothing is committed or pushed: the folder is yours to review first.
@@ -289,6 +293,39 @@ func cmdNew(g *config.Global) error {
 	firstCommitHelp(stype)
 	ui.Info("Then open it in your JetBrains IDE and let it start the devcontainer, or: gd-sync up")
 	return nil
+}
+
+// freePorts gives a new site the first ports, counting up from its type's
+// defaults, that no other site uses and nothing on this computer listens on,
+// so it runs next to the others.
+func freePorts(s *site.Site) {
+	taken := map[int]bool{}
+	for _, repo := range config.RegistryList() {
+		if other, err := site.Load(repo); err == nil {
+			for _, p := range other.Ports() {
+				taken[p] = true
+			}
+		}
+	}
+	free := func(p int) bool {
+		if taken[p] {
+			return false
+		}
+		l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+		if err != nil {
+			return false
+		}
+		l.Close()
+		return true
+	}
+	s.Defaults()
+	for try := 0; try < 100; try++ {
+		if !slices.ContainsFunc(s.Ports(), func(p int) bool { return !free(p) }) {
+			return
+		}
+		s.Port, s.DBPort, s.MailPort, s.PreviewPort = s.Port+1, 0, 0, 0
+		s.Defaults()
+	}
 }
 
 // firstCommitHelp says how to make a new site's first commit.

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/s-visser/gd-sync/internal/remote"
+	"github.com/s-visser/gd-sync/internal/scaffold"
 	"github.com/s-visser/gd-sync/internal/site"
 	"github.com/s-visser/gd-sync/internal/ui"
 )
@@ -148,6 +149,10 @@ func cmdUp(c *ctx) error {
 		}
 		ui.Info("PHP %s", v)
 		warnUnsupportedPHP(v)
+	}
+	// The ports may have changed in .gd-sync.toml since the last scaffold.
+	if err := scaffold.Env(c.s); err != nil {
+		return err
 	}
 	if err := exec.Command("docker", "volume", "create", ghVolume).Run(); err != nil {
 		return fmt.Errorf("Could not create the shared %s Docker volume: %w", ghVolume, err)

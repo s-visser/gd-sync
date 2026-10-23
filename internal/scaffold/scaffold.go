@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/s-visser/gd-sync/internal/site"
@@ -182,7 +183,7 @@ func Docs(s *site.Site) error {
 }
 
 // Devcontainer copies the template for the site's type and fills in the
-// site name.
+// site name and ports.
 func Devcontainer(s *site.Site) error {
 	tpl := templates()
 	root := s.Type + "/.devcontainer"
@@ -200,17 +201,34 @@ func Devcontainer(s *site.Site) error {
 		}
 		content := string(b)
 		if path.Base(p) == "devcontainer.json" {
-			content = strings.ReplaceAll(content, "__SITE__", s.Name)
+			content = strings.NewReplacer(
+				"__SITE__", s.Name,
+				"__PORT__", strconv.Itoa(s.Port),
+				"__DB_PORT__", strconv.Itoa(s.DBPort),
+				"__MAIL_PORT__", strconv.Itoa(s.MailPort),
+			).Replace(content)
 		}
 		return write(s, ".devcontainer/"+strings.TrimPrefix(p, root+"/"), content)
 	})
 	if err != nil {
 		return err
 	}
+	return Env(s)
+}
+
+// Env writes .devcontainer/.env, where docker compose reads the site's
+// settings from: its name, URLs, ports and PHP version.
+func Env(s *site.Site) error {
 	// GD_SYNC_VERSION is the gd-sync the container installs, like the workflows.
 	env := fmt.Sprintf("COMPOSE_PROJECT_NAME=%s\nLIVE_URL=%s\nLOCAL_URL=%s\nGD_SYNC_VERSION=%s\n", composeName(s.Name), s.LiveURL, s.LocalURL, ToolVersion)
-	if s.Type == "wordpress" && s.PHPVersion != "" {
-		env += "PHP_VERSION=" + s.PHPVersion + "\n"
+	switch s.Type {
+	case "astro":
+		env += fmt.Sprintf("ASTRO_PORT=%d\nPREVIEW_PORT=%d\n", s.Port, s.PreviewPort)
+	case "wordpress":
+		env += fmt.Sprintf("WP_PORT=%d\nDB_PORT=%d\nMAIL_PORT=%d\n", s.Port, s.DBPort, s.MailPort)
+		if s.PHPVersion != "" {
+			env += "PHP_VERSION=" + s.PHPVersion + "\n"
+		}
 	}
 	return write(s, ".devcontainer/.env", env)
 }

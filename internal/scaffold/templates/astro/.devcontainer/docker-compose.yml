@@ -21,6 +21,9 @@ services:
       ASTRO_TELEMETRY_DISABLED: "1"
       LOCAL_URL: ${LOCAL_URL:-http://localhost:4321}
       LIVE_URL: ${LIVE_URL:-}
+      # The preview's port on your computer (preview_port in .gd-sync.toml),
+      # for post-create.sh to show.
+      PREVIEW_PORT: ${PREVIEW_PORT:-4322}
       # Tells gd-sync it runs inside the devcontainer.
       GD_SYNC_CONTAINER: "1"
       # gh keeps its login on the shared volume, whatever XDG_CONFIG_HOME the
@@ -29,6 +32,8 @@ services:
     working_dir: /workspace
     command: sleep infinity
     ports:
+      # port and preview_port in .gd-sync.toml; inside the container they
+      # stay 4321 and 4322
       - "${ASTRO_PORT:-4321}:4321"   # dev server
       - "${PREVIEW_PORT:-4322}:4322" # `astro preview` of the real build
 

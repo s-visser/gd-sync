@@ -77,8 +77,8 @@ cat <<EOF
   Ready.
     Site       $LOCAL_URL
     Admin      $LOCAL_URL/wp-admin   (dev / dev)
-    Mail       http://localhost:8025
-    Database   127.0.0.1:13306  wordpress / wordpress
+    Mail       http://localhost:${MAIL_PORT:-8025}
+    Database   127.0.0.1:${DB_PORT:-13306}  wordpress / wordpress
     $GH_NOTE
 
   The site folder is mounted live — edit in the IDE, refresh the browser.

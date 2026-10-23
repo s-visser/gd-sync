@@ -47,6 +47,12 @@ func TestAllWordPress(t *testing.T) {
 	if !strings.Contains(read(".devcontainer/devcontainer.json"), `"acme (WordPress)"`) {
 		t.Error("site name not filled in")
 	}
+	if !strings.Contains(read(".devcontainer/devcontainer.json"), `[8080, 8025, 13306]`) {
+		t.Error("ports not filled in")
+	}
+	if env := read(".devcontainer/.env"); !strings.Contains(env, "WP_PORT=8080\nDB_PORT=13306\nMAIL_PORT=8025\n") {
+		t.Errorf(".env lacks the ports:\n%s", env)
+	}
 	if read(".gitattributes") == "" || !strings.Contains(read(".gitattributes"), "* -text") {
 		t.Error(".gitattributes must turn off line-ending conversion")
 	}
