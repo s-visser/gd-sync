@@ -5,6 +5,8 @@
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
 
+  "initializeCommand": "docker volume create gd-sync-gh",
+
   "forwardPorts": [8080, 8025, 13306],
   "portsAttributes": {
     "8080":  { "label": "WordPress", "onAutoForward": "notify" },

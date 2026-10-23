@@ -5,6 +5,8 @@
   "workspaceFolder": "/workspace",
   "shutdownAction": "stopCompose",
 
+  "initializeCommand": "docker volume create gd-sync-gh",
+
   "forwardPorts": [4321, 4322],
   "portsAttributes": {
     "4321": { "label": "Astro dev", "onAutoForward": "openBrowserOnce" },

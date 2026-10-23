@@ -325,7 +325,8 @@ computer, keeps working from the host as before.
 - Your `~/.ssh` is mounted at the container user's `~/.ssh`, read-write, so the
   keys, `known_hosts` and `gd-sync key` are shared with your computer.
 - `gh` keeps its login in the `gd-sync-gh` Docker volume, shared by every
-  gd-sync site. Log in once, in any of them: `gh auth login && gh auth setup-git`.
+  gd-sync site. It is external to each site's Compose project, so no site owns
+  it; `initializeCommand` in `devcontainer.json` and `gd-sync up` create it. Log in once, in any of them: `gh auth login && gh auth setup-git`.
   After that `git push`, `gd-sync merge` and `gd-sync secrets` work in here.
 - `gd-sync db` imports the dump straight into the container's database.
   `gd-sync up` and `down` drive Docker, so they only run on your computer.

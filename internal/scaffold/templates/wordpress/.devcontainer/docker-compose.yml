@@ -93,5 +93,8 @@ services:
 
 volumes:
   db-data:
+  # Shared by every gd-sync site, so no one site's project owns it: created
+  # before start by initializeCommand in devcontainer.json, or gd-sync up.
   gh-config:
     name: gd-sync-gh
+    external: true

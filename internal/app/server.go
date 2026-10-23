@@ -149,6 +149,9 @@ func cmdUp(c *ctx) error {
 		ui.Info("PHP %s", v)
 		warnUnsupportedPHP(v)
 	}
+	if err := exec.Command("docker", "volume", "create", ghVolume).Run(); err != nil {
+		return fmt.Errorf("Could not create the shared %s Docker volume: %w", ghVolume, err)
+	}
 	if err := compose(c, "up", "-d", "--build"); err != nil {
 		return err
 	}
@@ -161,6 +164,10 @@ func cmdUp(c *ctx) error {
 	ui.OK("%s is up — %s", c.s.Name, c.s.LocalURL)
 	return nil
 }
+
+// ghVolume keeps gh's login, shared by every gd-sync site's devcontainer.
+// The compose files mark it external, so it must exist before they start.
+const ghVolume = "gd-sync-gh"
 
 // localDBEmpty reports whether the devcontainer's database has no tables.
 // When it can't tell, it says no, so a working database is never replaced.
