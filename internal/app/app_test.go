@@ -588,9 +588,9 @@ func TestNewWithGlobalDefaults(t *testing.T) {
 	}
 	w.write(w.server, "wp-content/themes/t/style.css", "x")
 
-	// domain, then enter for name, folder, repo, type, host, user, port;
-	// the web root; enter for the maintained paths and the local port.
-	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n\n" + w.server + "\n\n\n"))
+	// domain, then enter for name, folder, type, host, user, port; the web
+	// root; enter for the maintained paths, no GitHub repo, and the local port.
+	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n" + w.server + "\n\n\n\n"))
 	t.Cleanup(func() { ui.SetInput(os.Stdin) })
 	if err := run([]string{"new"}); err != nil {
 		t.Fatal(err)
@@ -645,7 +645,8 @@ func TestNewLeavesTheFirstCommitToYou(t *testing.T) {
 	w.write(w.server, "wp-content/themes/t/style.css", "body{}\n")
 	w.write(w.server, "wp-content/plugins/other/other.php", "<?php\n")
 
-	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n\n" + w.server + "\nwp-content/themes/t\n\n\n"))
+	// With a maintained path GitHub defaults to yes; say no, so gh isn't run.
+	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n" + w.server + "\nwp-content/themes/t\nn\n\n"))
 	t.Cleanup(func() { ui.SetInput(os.Stdin) })
 	if err := run([]string{"new"}); err != nil {
 		t.Fatal(err)

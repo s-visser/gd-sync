@@ -84,6 +84,30 @@ func Confirm(q string) bool {
 	return false
 }
 
+// ConfirmDefault asks a yes/no question that enter answers with def.
+// Without a terminal, the answer is def.
+func ConfirmDefault(q string, def bool) bool {
+	if Yes {
+		return true
+	}
+	if !interactive() {
+		return def
+	}
+	hint := "[y/N]"
+	if def {
+		hint = "[Y/n]"
+	}
+	fmt.Printf("%s%s%s %s ", B, q, N, hint)
+	a, _ := readLine()
+	switch strings.ToLower(strings.TrimSpace(a)) {
+	case "y", "yes":
+		return true
+	case "n", "no":
+		return false
+	}
+	return def
+}
+
 // Choose asks the user to pick one of the options and returns its index; the
 // first option is the default. It returns -1 when nobody can answer — no
 // terminal, or -y, which answers yes/no questions but can't pick for you.

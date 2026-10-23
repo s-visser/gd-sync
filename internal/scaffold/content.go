@@ -55,8 +55,7 @@ _db/
 // about concepts and the handful of commands that won't churn — anything
 // version-specific belongs behind "gd-sync help".
 const cheatSheet = "# Working on this site\n\n" +
-	"This project is managed by **gd-sync**. Run gd-sync from anywhere inside this folder —\n" +
-	"it works out which site you mean, the way git does.\n\n" +
+	"This project is managed by **gd-sync**. Run gd-sync from anywhere inside this project.\n\n" +
 	"## The one rule\n\n" +
 	"The live server is the source of truth. `main` mirrors the server's copy of the\n" +
 	"paths you maintain (`tracked` in `.gd-sync.toml`). You work on `develop`. Never edit\n" +

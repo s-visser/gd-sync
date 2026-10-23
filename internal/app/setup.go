@@ -186,15 +186,6 @@ func cmdNew(g *config.Global) error {
 	if err := emptyOrMissing(dir); err != nil {
 		return err
 	}
-	ghDefault := ""
-	if g.GitOwner != "" {
-		ghDefault = g.GitOwner + "/" + name
-	}
-	ghName := ui.Ask(`GitHub repo (owner/name, or "none"):`, ghDefault)
-	switch strings.ToLower(ghName) {
-	case "none", "-":
-		ghName = ""
-	}
 	stype := ui.Ask("Type — wordpress or astro:", g.DefaultType)
 	if stype != "wordpress" && stype != "astro" {
 		return errors.New("Type must be 'wordpress' or 'astro'")
@@ -217,6 +208,16 @@ func cmdNew(g *config.Global) error {
 		ui.Info("the site is downloaded too, so it runs locally, but git ignores it.")
 		ui.Info("Leave empty to start with none — add them to tracked in %s later.", site.File)
 		s.Tracked = strings.Fields(ui.Ask("Maintained paths:", ""))
+	}
+	// git is always used locally; this only decides whether it goes to GitHub.
+	// A WordPress site with nothing maintained has little worth publishing.
+	ghName := ""
+	if ui.ConfirmDefault("Create a GitHub repo for it?", stype == "astro" || len(s.Tracked) > 0) {
+		ghDefault := ""
+		if g.GitOwner != "" {
+			ghDefault = g.GitOwner + "/" + name
+		}
+		ghName = ui.Ask("GitHub repo (owner/name):", ghDefault)
 	}
 	fmt.Fprintln(os.Stderr)
 	ui.Info("The port the local site runs on. Every site needs its own to run at the same time;")
