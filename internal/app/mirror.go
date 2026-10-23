@@ -9,9 +9,14 @@ import (
 // mirror copies the rest of the live site — core, other plugins and themes,
 // uploads — into the repo's folder, so the site runs locally. It only writes
 // files git ignores, so your work and your commits are never touched. Only
-// files whose size or date moved are downloaded.
+// files whose size or date moved are downloaded. For a new site, with
+// mirrorAll, it takes the maintained paths too, for you to commit.
 func (c *ctx) mirror(conn *remote.Conn) error {
-	ui.Step("Updating the local copy of the whole site (git ignores it)")
+	if c.mirrorAll {
+		ui.Step("Downloading the site")
+	} else {
+		ui.Step("Updating the local copy of the whole site (git ignores it)")
+	}
 	m := transfer.NewMatcher([]string{"."}, append(append([]string{}, transfer.MirrorExcludes...), c.s.Exclude...))
 	server, err := transfer.ListRemote(conn, c.s.RemoteRoot, m)
 	if err != nil {
@@ -22,7 +27,7 @@ func (c *ctx) mirror(conn *remote.Conn) error {
 		return err
 	}
 	for p := range server {
-		if !ign[p] {
+		if !ign[p] && !c.mirrorAll {
 			delete(server, p)
 		}
 	}

@@ -31,8 +31,9 @@ func (c *Comparison) Settled() State {
 }
 
 // Compare lists the server, decides which files could have changed since
-// the last known state, fetches those into workDir and hashes them.
-func Compare(conn *remote.Conn, repo gitx.Repo, root string, m Matcher, known State, workDir string) (*Comparison, error) {
+// the last known state, fetches those into workDir and hashes them. Files
+// lfs reports as Git LFS ones are compared by their pointer.
+func Compare(conn *remote.Conn, repo gitx.Repo, root string, m Matcher, known State, workDir string, lfs func(string) bool) (*Comparison, error) {
 	server, err := ListRemote(conn, root, m)
 	if err != nil {
 		return nil, err
@@ -64,7 +65,7 @@ func Compare(conn *remote.Conn, repo gitx.Repo, root string, m Matcher, known St
 			case main[p].ID == "":
 				c.New = append(c.New, p)
 				c.Fetched[p] = f
-			case main[p].ID != f.Blob:
+			case main[p].ID != f.ID(lfs(p)):
 				c.Changed = append(c.Changed, p)
 				c.Fetched[p] = f
 			}
@@ -141,8 +142,9 @@ func ChangedPaths(a, b Tree) []string {
 }
 
 // ServerBlobs fetches the server's copy of each path that it has and returns
-// their blob ids. Paths the server doesn't have are left out.
-func ServerBlobs(conn *remote.Conn, root string, paths []string, server Manifest, workDir string) (map[string]string, error) {
+// their blob ids — the pointer's for Git LFS files. Paths the server doesn't
+// have are left out.
+func ServerBlobs(conn *remote.Conn, root string, paths []string, server Manifest, workDir string, lfs func(string) bool) (map[string]string, error) {
 	var present []string
 	for _, p := range paths {
 		if _, ok := server[p]; ok {
@@ -162,7 +164,7 @@ func ServerBlobs(conn *remote.Conn, root string, paths []string, server Manifest
 			}
 			return nil, err
 		}
-		blobs[p] = f.Blob
+		blobs[p] = f.ID(lfs(p))
 	}
 	return blobs, nil
 }

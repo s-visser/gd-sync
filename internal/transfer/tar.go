@@ -3,14 +3,17 @@ package transfer
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +23,17 @@ import (
 	"github.com/s-visser/gd-sync/internal/ui"
 )
 
-// Fetched is a server file saved locally, with its git blob id.
-type Fetched struct{ File, Blob string }
+// Fetched is a server file saved locally, with its git blob id, and the
+// blob id git holds for it instead when it goes through Git LFS.
+type Fetched struct{ File, Blob, Pointer string }
+
+// ID is the blob id main holds for this file when it matches.
+func (f Fetched) ID(lfs bool) string {
+	if lfs {
+		return f.Pointer
+	}
+	return f.Blob
+}
 
 // Fetch downloads the given server files as one tar stream into dir. Files
 // are saved under numbered names, so no server path ever has to be a valid
@@ -41,9 +53,9 @@ func Fetch(conn *remote.Conn, root string, paths []string, dir string, progress 
 	got := map[string]Fetched{}
 	err := readTar(pr, func(name string, size int64, r io.Reader) error {
 		file := filepath.Join(dir, strconv.Itoa(len(got)))
-		blob, err := saveHashed(file, size, counter{r, progress})
+		blob, pointer, err := saveHashed(file, size, counter{r, progress})
 		if err == nil {
-			got[name] = Fetched{File: file, Blob: blob}
+			got[name] = Fetched{File: file, Blob: blob, Pointer: pointer}
 			progress.File()
 		}
 		return err
@@ -93,19 +105,42 @@ func readTar(r io.Reader, each func(name string, size int64, r io.Reader) error)
 	}
 }
 
-// saveHashed writes r to file and returns its git blob id.
-func saveHashed(file string, size int64, r io.Reader) (string, error) {
+// saveHashed writes r to file and returns its git blob id, and the blob id
+// of its Git LFS pointer.
+func saveHashed(file string, size int64, r io.Reader) (blob, pointer string, err error) {
 	f, err := os.Create(file)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer f.Close()
-	h := sha1.New()
+	h, h256 := sha1.New(), sha256.New()
 	fmt.Fprintf(h, "blob %d\x00", size)
-	if _, err := io.Copy(io.MultiWriter(f, h), r); err != nil {
-		return "", err
+	if _, err := io.Copy(io.MultiWriter(f, h, h256), r); err != nil {
+		return "", "", err
 	}
-	return hex.EncodeToString(h.Sum(nil)), f.Close()
+	p := lfsPointer(hex.EncodeToString(h256.Sum(nil)), size)
+	pointer, _ = BlobID(strings.NewReader(p), int64(len(p)))
+	return hex.EncodeToString(h.Sum(nil)), pointer, f.Close()
+}
+
+// lfsPointer is what Git LFS stores in git in place of a file's content.
+func lfsPointer(sha256hex string, size int64) string {
+	return fmt.Sprintf("version https://git-lfs.github.com/spec/v1\noid sha256:%s\nsize %d\n", sha256hex, size)
+}
+
+var pointerSize = regexp.MustCompile(`(?m)^size (\d+)$`)
+
+// pointerContentSize is the size of the file an LFS pointer stands for.
+func pointerContentSize(pointer []byte) (int64, bool) {
+	if !bytes.HasPrefix(pointer, []byte("version https://git-lfs.github.com/spec/")) {
+		return 0, false
+	}
+	m := pointerSize.FindSubmatch(pointer)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(string(m[1]), 10, 64)
+	return n, err == nil
 }
 
 // BlobID is git's object id for content of the given size.
@@ -161,8 +196,9 @@ func upload(conn *remote.Conn, root string, write func(*tar.Writer) error) error
 }
 
 // UploadBlobs ships files straight from git's object store, so what goes
-// live is exactly main, whatever the working tree looks like.
-func UploadBlobs(conn *remote.Conn, root string, repo gitx.Repo, t Tree, paths []string) error {
+// live is exactly main, whatever the working tree looks like. Files lfs
+// reports as Git LFS ones go up as their content, never as the pointer.
+func UploadBlobs(conn *remote.Conn, root string, repo gitx.Repo, t Tree, paths []string, lfs func(string) bool) error {
 	if len(paths) == 0 {
 		return nil
 	}
@@ -198,6 +234,28 @@ func UploadBlobs(conn *remote.Conn, root string, repo gitx.Repo, t Tree, paths [
 			if b.Mode == "100755" {
 				mode = 0o755
 			}
+			if lfs != nil && lfs(p) && size < 1024 {
+				pointer := make([]byte, size+1) // and the newline after the object
+				if _, err := io.ReadFull(out, pointer); err != nil {
+					return err
+				}
+				if real, ok := pointerContentSize(pointer[:size]); ok {
+					if err := tw.WriteHeader(&tar.Header{Name: p, Mode: mode, Size: real, ModTime: now, Typeflag: tar.TypeReg}); err != nil {
+						return err
+					}
+					if err := smudge(repo, p, pointer[:size], tw, real); err != nil {
+						return err
+					}
+					continue
+				}
+				if err := tw.WriteHeader(&tar.Header{Name: p, Mode: mode, Size: size, ModTime: now, Typeflag: tar.TypeReg}); err != nil {
+					return err
+				}
+				if _, err := tw.Write(pointer[:size]); err != nil {
+					return err
+				}
+				continue
+			}
 			if err := tw.WriteHeader(&tar.Header{Name: p, Mode: mode, Size: size, ModTime: now, Typeflag: tar.TypeReg}); err != nil {
 				return err
 			}
@@ -217,6 +275,28 @@ func UploadBlobs(conn *remote.Conn, root string, repo gitx.Repo, t Tree, paths [
 	return err
 }
 
+// smudge writes the content a Git LFS pointer stands for, which git-lfs
+// downloads first if this computer doesn't have it yet.
+func smudge(repo gitx.Repo, p string, pointer []byte, w io.Writer, size int64) error {
+	cmd := exec.Command("git", "-C", repo.Dir, "lfs", "smudge", "--", p)
+	cmd.Stdin = bytes.NewReader(pointer)
+	out, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("%s is in Git LFS, and git-lfs could not run: %w", p, err)
+	}
+	_, err = io.CopyN(w, out, size)
+	io.Copy(io.Discard, out)
+	if werr := cmd.Wait(); err == nil && werr != nil {
+		err = fmt.Errorf("git lfs smudge %s: %v %s", p, werr, strings.TrimSpace(errb.String()))
+	}
+	return err
+}
+
 // UploadDir ships files from a local folder, such as a static build.
 func UploadDir(conn *remote.Conn, root, dir string, paths []string) error {
 	if len(paths) == 0 {
@@ -230,7 +310,11 @@ func UploadDir(conn *remote.Conn, root, dir string, paths []string) error {
 			}
 			st, err := f.Stat()
 			if err == nil {
-				err = tw.WriteHeader(&tar.Header{Name: p, Mode: 0o644, Size: st.Size(), ModTime: st.ModTime(), Typeflag: tar.TypeReg})
+				mode := int64(0o644)
+				if st.Mode().Perm()&0o111 != 0 {
+					mode = 0o755
+				}
+				err = tw.WriteHeader(&tar.Header{Name: p, Mode: mode, Size: st.Size(), ModTime: st.ModTime(), Typeflag: tar.TypeReg})
 			}
 			if err == nil {
 				_, err = io.Copy(tw, f)

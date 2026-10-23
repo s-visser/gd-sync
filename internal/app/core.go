@@ -14,6 +14,7 @@ import (
 	"github.com/s-visser/gd-sync/internal/site"
 	"github.com/s-visser/gd-sync/internal/transfer"
 	"github.com/s-visser/gd-sync/internal/ui"
+	"github.com/s-visser/gd-sync/internal/vet"
 )
 
 func stamp(layout string) string { return time.Now().Format(layout) }
@@ -47,6 +48,9 @@ func cmdSync(c *ctx) error {
 
 // syncMain is the snapshot half of cmdSync.
 func (c *ctx) syncMain(conn *remote.Conn) error {
+	if err := c.needMain(); err != nil {
+		return err
+	}
 	gitSettings(c.git)
 
 	back := c.git.CurrentBranch()
@@ -66,7 +70,19 @@ func (c *ctx) syncMain(conn *remote.Conn) error {
 		return err
 	}
 
-	put := append(append([]string{}, cmp.New...), cmp.Changed...)
+	if err := c.ensureLFS(); err != nil {
+		return err
+	}
+	held, err := c.vetNew(cmp)
+	if err != nil {
+		return err
+	}
+	var put []string
+	for _, p := range append(append([]string{}, cmp.New...), cmp.Changed...) {
+		if !held[p] && !c.keptOut(p) {
+			put = append(put, p)
+		}
+	}
 	if len(put) > 0 {
 		if err := transfer.Place(c.s.Repo, cmp.Fetched, put); err != nil {
 			return err
@@ -82,6 +98,12 @@ func (c *ctx) syncMain(conn *remote.Conn) error {
 	}
 	if n := len(cmp.Skipped); n > 0 {
 		ui.Warn("%d file(s) vanished from the server mid-sync — run sync again", n)
+	}
+
+	if c.git.Status(site.File, ".gitignore", ".gitattributes") != "" {
+		if err := c.git.Quiet("add", "--", site.File, ".gitignore", ".gitattributes"); err != nil {
+			return err
+		}
 	}
 
 	if c.git.OK("diff", "--cached", "--quiet") {
@@ -120,6 +142,41 @@ func (c *ctx) syncMain(conn *remote.Conn) error {
 	return nil
 }
 
+// vetNew checks the files the server has that main doesn't yet, before any
+// of them go in.
+func (c *ctx) vetNew(cmp *transfer.Comparison) (map[string]bool, error) {
+	if len(cmp.New) == 0 {
+		return map[string]bool{}, nil
+	}
+	var files []vet.File
+	isNew := map[string]bool{}
+	for _, p := range cmp.New {
+		files = append(files, vet.File{Path: p, Local: cmp.Fetched[p].File, Size: cmp.Server[p].Size})
+		isNew[p] = true
+	}
+	has := func(p string) bool { _, ok := cmp.Main[p]; return ok || isNew[p] }
+	inGit := func(dir string) bool {
+		for p := range cmp.Main {
+			if strings.HasPrefix(p, dir+"/") {
+				return true
+			}
+		}
+		return false
+	}
+	return c.vetFiles(files, has, inGit)
+}
+
+// needMain stops a command that works on main before main has a commit:
+// gd-sync new leaves the first one to you.
+func (c *ctx) needMain() error {
+	if c.git.OK("rev-parse", "--verify", "-q", "main^{commit}") {
+		return nil
+	}
+	ui.Warn("main has no commits yet. Check what git will take in with: git status")
+	firstCommitHelp(c.s.Type)
+	return errors.New("Make the first commit on main, then run this again")
+}
+
 // compare holds the server up against main, using the last known state.
 func (c *ctx) compare(conn *remote.Conn) (*transfer.Comparison, string, error) {
 	statePath, err := transfer.StatePath(c.git)
@@ -134,7 +191,7 @@ func (c *ctx) compare(conn *remote.Conn) (*transfer.Comparison, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	cmp, err := transfer.Compare(conn, c.git, c.s.RemoteRoot, c.matcher(c.s.Tracked), known, wd)
+	cmp, err := transfer.Compare(conn, c.git, c.s.RemoteRoot, c.matcher(c.s.Tracked), known, wd, c.isLFS)
 	return cmp, statePath, err
 }
 
@@ -142,6 +199,9 @@ func (c *ctx) compare(conn *remote.Conn) (*transfer.Comparison, string, error) {
 // branch, then live.
 func cmdMerge(c *ctx, from string) error {
 	if _, err := c.server(); err != nil {
+		return err
+	}
+	if err := c.needMain(); err != nil {
 		return err
 	}
 	if !c.git.OK("rev-parse", "--verify", "-q", from) {
@@ -205,6 +265,9 @@ func cmdStatus(c *ctx) error {
 	if err != nil {
 		return err
 	}
+	if err := c.needMain(); err != nil {
+		return err
+	}
 	ui.Step("Server vs main for %s (read-only)", c.s.Name)
 	cmp, statePath, err := c.compare(conn)
 	if err != nil {
@@ -230,6 +293,9 @@ func cmdStatus(c *ctx) error {
 func cmdDeploy(c *ctx) error {
 	conn, err := c.server()
 	if err != nil {
+		return err
+	}
+	if err := c.needMain(); err != nil {
 		return err
 	}
 	if b := c.git.CurrentBranch(); b != "main" {
@@ -278,7 +344,7 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 	if err != nil {
 		return err
 	}
-	blobs, err := transfer.ServerBlobs(conn, c.s.RemoteRoot, changed, server, wd)
+	blobs, err := transfer.ServerBlobs(conn, c.s.RemoteRoot, changed, server, wd, c.isLFS)
 	if err != nil {
 		return err
 	}
@@ -291,6 +357,10 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 	if len(up)+len(del) == 0 {
 		ui.OK("Server already matches main — nothing to deploy")
 		return c.recordDeployed(conn)
+	}
+	builds, err := c.buildVendors(conn)
+	if err != nil {
+		return err
 	}
 
 	ui.Say("")
@@ -305,6 +375,9 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 	ui.List(ui.G, "+ ", added)
 	ui.List(ui.Y, "~ ", modified)
 	ui.List(ui.R, "- ", del)
+	for _, b := range builds {
+		ui.Info("%s, as built: %d to upload, %d to remove", b.v.Path, len(b.up), len(b.del))
+	}
 	ui.Say("")
 	if !ui.Confirm("Push these to the LIVE site?") {
 		ui.Say("Cancelled.")
@@ -313,11 +386,19 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 
 	c.backup(conn)
 	ui.Step("Uploading")
-	if err := transfer.UploadBlobs(conn, c.s.RemoteRoot, c.git, main, up); err != nil {
+	if err := transfer.UploadBlobs(conn, c.s.RemoteRoot, c.git, main, up, c.isLFS); err != nil {
 		return err
 	}
 	if err := transfer.RemoveRemote(conn, c.s.RemoteRoot, del); err != nil {
 		return err
+	}
+	for _, b := range builds {
+		if err := transfer.UploadDir(conn, c.s.RemoteRoot, b.dir, b.up); err != nil {
+			return err
+		}
+		if err := transfer.RemoveRemote(conn, c.s.RemoteRoot, b.del); err != nil {
+			return err
+		}
 	}
 	if err := c.recordDeployed(conn); err != nil {
 		return err

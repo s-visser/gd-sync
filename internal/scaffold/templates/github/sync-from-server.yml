@@ -35,6 +35,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          lfs: true
 
       - uses: actions/setup-go@v5
         with:

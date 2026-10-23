@@ -27,9 +27,11 @@ COPY --from=keys /usr/share/keyrings/debian-archive-keyring.gpg /usr/share/gd-sy
 COPY apt-install.sh /usr/local/bin/apt-install
 COPY gh-install.sh /usr/local/bin/gh-install
 COPY --from=gd-sync /out/ /usr/local/bin/
-# git and ssh for the IDE and gd-sync, which also work from inside here.
+# git and ssh for the IDE and gd-sync, which also work from inside here, and
+# git-lfs for sites that keep large binaries in it.
 RUN set -eux; \
     sh /usr/local/bin/apt-install less unzip mysql-client git openssh-client; \
+    sh /usr/local/bin/apt-install git-lfs || echo "git-lfs not available for this Debian — skipped"; \
     rm -rf /var/lib/apt/lists/*; \
     sh /usr/local/bin/gh-install; \
     git config --system --add safe.directory '*'

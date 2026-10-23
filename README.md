@@ -81,11 +81,31 @@ Asks for the domain, the site's name, local folder, GitHub repo, site type and
 the SSH details. The name defaults to the full domain, and so do the folder and
 the repo: `wolfpackvision.com` → `~/Sites/wolfpackvision.com` and
 `you/wolfpackvision.com`. Like `git clone`, it refuses a folder that already
-has something in it. Then it creates the folder and repo, writes the config, installs
-the devcontainer and the three workflows, tests SSH, offers to install your SSH
-key, pulls the paths you maintain onto `main`, copies the rest of the live site
-into the folder, offers to pull the database, branches `develop`, creates the
-GitHub repo and sets the deploy secrets.
+has something in it. Then it creates the folder and a git repo, writes the config, installs
+the devcontainer and the three workflows, tests SSH, matches the live PHP version,
+offers to install your SSH key, downloads the whole live site into the folder,
+asks about vendor folders, credentials and large binaries in the paths you
+maintain, offers to pull the database, creates the GitHub repo — empty — and sets
+the deploy secrets.
+
+It commits and pushes nothing. Check what git will take in, then make the first
+commit yourself:
+
+```bash
+git status
+git add -A && git commit -m "[server-sync] Live server state"
+git branch develop && git push -u origin main develop
+```
+
+`[server-sync]` marks `main` as what the server has, so the deploy worker skips
+it and the next deploy knows where it stands. A GitHub repo that already exists
+is left alone — it may hold history; add it as `origin` yourself if you mean to.
+
+The PHP version comes from the server's settings — on GoDaddy, the CloudLinux PHP
+Selector's server-wide version. When the site itself answers with a different one
+(its `X-Powered-By` header), gd-sync still goes by the server and warns: the
+domain probably has its own version set in cPanel's MultiPHP Manager or an
+`.htaccess` handler, which is worth fixing on the server.
 
 It asks which paths you maintain: the plugins and themes you write, e.g.
 `wp-content/plugins/acme-custom`. Leave it empty to start with none. You can
@@ -165,6 +185,37 @@ The folder is the live web root, plus gd-sync's own files:
 `.gitignore` is generated from `tracked`: it ignores everything, then lets back
 in gd-sync's files and each maintained path. With nothing maintained, git holds
 only gd-sync's files.
+
+### Inside a maintained path: vendor folders, credentials, large binaries
+
+Before server files go into git, sync checks them — and `gd-sync scaffold` checks
+newly maintained paths — and asks about:
+
+| found | offered | recorded as |
+|---|---|---|
+| a `vendor/` folder | keep it out of git; with a `composer.json` next to it, every deploy rebuilds it | `[[vendor]]` |
+| a credential-looking file (asked one by one) | keep it out of git | `ignore` |
+| binaries of 1 MB or more | Git LFS, or keep them out of git | `lfs`, `ignore` |
+
+```toml
+ignore = ["wp-content/plugins/shop/auth/gtranslate.json"]
+lfs = ["wp-content/themes/acme/assets/intro.mp4"]
+
+[[vendor]]
+path = "wp-content/plugins/shop/vendor"
+build = "composer install --no-dev --no-interaction --no-progress --prefer-dist"
+```
+
+What git leaves out is never synced or deployed — the server's copy stays as it
+is — but it is downloaded with the rest of the site, so the site runs locally.
+The exception is a vendor folder with a `build`: deploy exports main's copy of
+the folder above it, runs the build there, and only then uploads anything. The
+server's vendor folder ends up exactly what the build made, and if the build
+fails, nothing goes live. On GitHub the deploy worker sets up PHP (`php_version`)
+and Composer for it.
+
+Without a terminal, or with `-y`, nobody can answer, so those files stay out of
+git until the next sync in a terminal asks.
 
 ## The loop
 

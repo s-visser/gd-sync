@@ -93,6 +93,16 @@ const cheatSheet = "# Working on this site\n\n" +
 	"| `_db/` | database dumps — not committed |\n" +
 	"| `.devcontainer/` | the local Docker environment, with a local `wp-config.php` and `.htaccess` |\n" +
 	"| `.github/workflows/` | the sync and deploy workers |\n\n" +
+	"## What git leaves out\n\n" +
+	"Before files from the server go into git, gd-sync asks about three kinds:\n\n" +
+	"- **Dependency folders** (a plugin's `vendor/`): kept out of git. Every deploy\n" +
+	"  rebuilds them from `main` first (`[[vendor]]` in `.gd-sync.toml`), and stops\n" +
+	"  before uploading anything if the build fails.\n" +
+	"- **Credential-looking files**: kept out of git (`ignore`). The server's copy is\n" +
+	"  never synced or deployed, only downloaded so the site runs locally.\n" +
+	"- **Large binaries**: kept in Git LFS (`lfs`), or left out like the above.\n\n" +
+	"Files nobody was there to decide about — the nightly worker, or `-y` — wait\n" +
+	"outside git until the next sync in a terminal.\n\n" +
 	"## Inside the devcontainer\n\n" +
 	"gd-sync, git and gh are installed in the container, so everything above works from\n" +
 	"the IDE's terminal too, except `gd-sync up` / `down`: those run on your computer.\n" +

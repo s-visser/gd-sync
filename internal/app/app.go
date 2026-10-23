@@ -140,6 +140,7 @@ type ctx struct {
 	stashed    bool
 	keepBranch bool // sync stays on main, for merge
 	noMirror   bool // sync leaves the local copy of the site alone
+	mirrorAll  bool // the local copy takes the maintained paths too, for a new site
 	work       []string
 }
 
@@ -218,7 +219,11 @@ func (c *ctx) workDir() (string, error) {
 }
 
 func (c *ctx) matcher(roots []string) transfer.Matcher {
-	return transfer.NewMatcher(roots, append(append([]string{}, transfer.DefaultExcludes...), c.s.Exclude...))
+	ex := append(append([]string{}, transfer.DefaultExcludes...), c.s.Exclude...)
+	for _, p := range c.s.KeptOut() {
+		ex = append(ex, "/"+p)
+	}
+	return transfer.NewMatcher(roots, ex)
 }
 
 // gitSettings makes git keep the server's bytes exactly: no line-ending

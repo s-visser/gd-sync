@@ -73,32 +73,63 @@ var poweredBy = regexp.MustCompile(`PHP/(\d+\.\d+)((?:\.\d+)?)`)
 
 // livePHP finds the PHP version the live site runs, e.g. "8.5", and says
 // where from. full is the exact release, e.g. "8.5.12", or the same as
-// version when that can't be found out. The site's own X-Powered-By header
-// wins: it is what visitors get. When the server says something else, both
-// are shown.
+// version when that can't be found out.
 func (c *ctx) livePHP(conn *remote.Conn) (version, full, source string) {
+	var server phpFinding
 	out, err := conn.Output("sh -s -- "+remote.QuoteAll([]string{c.s.RemoteRoot, cpanelUserdata}), strings.NewReader(phpProbe))
 	if err == nil {
 		if f := strings.Split(strings.TrimRight(string(out), "\r\n"), "\t"); len(f) >= 2 {
-			source, version = f[0], phpDotted(f[1])
-			if len(f) > 2 && strings.HasPrefix(f[2], version+".") {
-				full = f[2]
+			server.source, server.version = f[0], phpDotted(f[1])
+			if len(f) > 2 && strings.HasPrefix(f[2], server.version+".") {
+				server.full = f[2]
 			}
 		}
 	}
-	if v, f := headerPHP(c.s.LiveURL); v != "" {
-		if version != "" && version != v {
-			ui.Warn("The server's %s says PHP %s, but %s answers with PHP %s — going by the site", source, version, c.s.LiveURL, v)
+	web := phpFinding{source: "the live site's X-Powered-By header"}
+	web.version, web.full = headerPHP(c.s.LiveURL)
+	got, disagree := pickPHP(server, web)
+	if disagree {
+		ui.Warn("%s answers with PHP %s, but the server's %s says PHP %s — going by the server.", c.s.LiveURL, web.version, server.source, server.version)
+		if server.source == selectorSource {
+			ui.Warn("The selector is the server-wide version, so this domain looks like it has its own PHP set,")
+			ui.Warn("which is probably a mistake on the server. If %s is what it should run, change the", server.version)
+			ui.Warn("domain's version: cPanel -> MultiPHP Manager, or an AddHandler line in its .htaccess.")
+		} else {
+			ui.Warn("Something in front of it — a cache, a CDN, another handler — may be answering instead. Check it.")
 		}
-		if f == "" && v == version {
-			f = full
+	}
+	if got.full == "" {
+		got.full = got.version
+	}
+	return got.version, got.full, got.source
+}
+
+// selectorSource is what phpProbe calls the CloudLinux PHP Selector.
+const selectorSource = "CloudLinux PHP Selector"
+
+// phpFinding is one answer to "which PHP does the site run".
+type phpFinding struct{ version, full, source string }
+
+// pickPHP decides between what the server's settings say and what the site
+// answers with. The server's settings win: on GoDaddy the PHP Selector's
+// server-wide version is the one that runs. Only the command-line PHP, the
+// probe's last resort, is a weaker guess than the site's own header.
+// disagree reports that both answered, with different versions.
+func pickPHP(server, site phpFinding) (got phpFinding, disagree bool) {
+	switch {
+	case server.version == "":
+		return site, false
+	case site.version == "":
+		return server, false
+	case site.version == server.version:
+		if server.full == "" {
+			server.full = site.full
 		}
-		version, full, source = v, f, "the live site's X-Powered-By header"
+		return server, false
+	case strings.HasPrefix(server.source, "command-line PHP"):
+		return site, false
 	}
-	if full == "" {
-		full = version
-	}
-	return version, full, source
+	return server, true
 }
 
 // headerPHP reads the PHP version from a site's X-Powered-By header: "8.5",

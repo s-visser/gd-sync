@@ -103,6 +103,11 @@ func cmdScaffold(c *ctx) error {
 	}
 	ui.OK("Scaffolding refreshed for %s", c.s.Name)
 	ui.Info("GD-SYNC.md, devcontainer, .github/workflows, .run, %s, .gitignore, .gitattributes", site.File)
+	if c.s.Type == "wordpress" {
+		if err := c.vetUntracked(); err != nil {
+			return err
+		}
+	}
 	if out, _ := c.git.Output("ls-files", "--others", "--exclude-standard", "--directory"); strings.TrimSpace(out) != "" {
 		ui.Info("Not in git yet — newly maintained paths show up here. Commit them on develop:")
 		ui.List("", "", strings.Fields(out))
@@ -206,6 +211,7 @@ func cmdNew(g *config.Global) error {
 	s.Defaults()
 
 	// ---- build it -----------------------------------------------------------
+	// Nothing is committed or pushed: the folder is yours to review first.
 	ui.Step("Creating %s", dir)
 	if err := os.MkdirAll(filepath.Join(dir, "_db"), 0o755); err != nil {
 		return err
@@ -224,18 +230,7 @@ func cmdNew(g *config.Global) error {
 	if err := config.RegistryAdd(dir); err != nil {
 		return err
 	}
-	if err := git.Quiet("add", "-A"); err != nil {
-		return err
-	}
-	if !git.OK("rev-parse", "--verify", "-q", "HEAD") {
-		if err := git.Commit("Scaffold " + name); err != nil {
-			return err
-		}
-	}
-	if !git.OK("rev-parse", "--verify", "-q", "main") {
-		_ = git.Quiet("branch", "-M", "main")
-	}
-	ui.OK("repo created")
+	ui.OK("folder and git repo created — nothing committed")
 
 	c := &ctx{cfg: g, s: s, git: git}
 	defer c.close()
@@ -256,15 +251,8 @@ func cmdNew(g *config.Global) error {
 
 	if stype == "wordpress" {
 		ui.Step("Matching the live site's PHP version")
-		if changed, err := c.checkPHP(conn, true); err != nil {
+		if _, err := c.checkPHP(conn, true); err != nil {
 			return err
-		} else if changed {
-			if err := git.Quiet("add", "-A"); err != nil {
-				return err
-			}
-			if err := git.Commit("Use PHP " + s.PHPVersion + ", as the live site does"); err != nil {
-				return err
-			}
 		}
 	}
 
@@ -274,8 +262,12 @@ func cmdNew(g *config.Global) error {
 		}
 	}
 	if stype == "wordpress" {
-		c.keepBranch = true
-		if err := cmdSync(c); err != nil {
+		c.mirrorAll = true
+		if err := c.mirror(conn); err != nil {
+			return err
+		}
+		c.mirrorAll = false
+		if err := c.vetUntracked(); err != nil {
 			return err
 		}
 		if ui.Confirm("Download the live database now?") {
@@ -285,44 +277,80 @@ func cmdNew(g *config.Global) error {
 		}
 	}
 
-	if !git.OK("rev-parse", "--verify", "-q", "develop") {
-		_ = git.Quiet("branch", "develop", "main")
-	}
-	if err := git.Quiet("checkout", "-q", "develop"); err != nil {
-		return err
-	}
-
 	if ghName != "" {
-		if _, err := exec.LookPath("gh"); err != nil {
-			ui.Warn("GitHub CLI not installed — create %s yourself, then: gd-sync secrets", ghName)
-		} else {
-			ui.Step("Setting up GitHub")
-			if !git.HasRemote() {
-				vis := "--private"
-				if g.GitPrivate == "false" {
-					vis = "--public"
-				}
-				cmd := exec.Command("gh", "repo", "create", ghName, vis, "--source=.", "--remote=origin", "--push")
-				cmd.Dir, cmd.Stdout, cmd.Stderr = dir, os.Stdout, os.Stderr
-				if cmd.Run() != nil {
-					ui.Warn("Could not create %s — add the remote by hand", ghName)
-				}
-			}
-			_ = git.Quiet("push", "-q", "-u", "origin", "main", "develop")
-			if err := cmdSecrets(c); err != nil {
-				ui.Fail(err)
-				ui.Warn("Set secrets later with: gd-sync secrets")
-			}
-		}
+		c.githubRepo(ghName)
 	}
 
 	ui.Say("")
-	ui.OK("%s is ready.", name)
+	ui.OK("%s is set up. Nothing is committed or pushed yet.", name)
 	ui.Say("")
 	ui.Info("cd %s", dir)
-	ui.Info("Open it in your JetBrains IDE and let it start the devcontainer, or: gd-sync up")
-	ui.Info("From inside that folder gd-sync needs no arguments: gd-sync sync, gd-sync merge, gd-sync db")
+	ui.Info("Check what git will take in — gd-sync's files, and the paths you maintain:  git status")
+	firstCommitHelp(stype)
+	ui.Info("Then open it in your JetBrains IDE and let it start the devcontainer, or: gd-sync up")
 	return nil
+}
+
+// firstCommitHelp says how to make a new site's first commit.
+func firstCommitHelp(stype string) {
+	ui.Info("Then make the first commit and push it:")
+	if stype == "wordpress" {
+		ui.Info(`  git add -A && git commit -m "[server-sync] Live server state"`)
+	} else {
+		ui.Info(`  git add -A && git commit -m "Scaffold"`)
+	}
+	ui.Info("  git branch develop && git push -u origin main develop")
+	if stype == "wordpress" {
+		ui.Info("[server-sync] tells gd-sync and the deploy worker that main is what the server has.")
+	}
+}
+
+// githubRepo creates the site's GitHub repo, empty, and adds it as origin.
+// A repo that already exists is left alone: it may hold history, and
+// pushing this folder into it is a decision for you.
+func (c *ctx) githubRepo(name string) {
+	if _, err := exec.LookPath("gh"); err != nil {
+		ui.Warn("GitHub CLI not installed — create %s yourself, add it as origin, then: gd-sync secrets", name)
+		return
+	}
+	ui.Step("Setting up GitHub")
+	if c.git.HasRemote() {
+		ui.Info("origin is already set")
+	} else if exec.Command("gh", "repo", "view", name).Run() == nil {
+		ui.Warn("%s already exists on GitHub, and may have history — leaving it alone.", name)
+		ui.Warn("To use it anyway: git remote add origin %s", c.githubURL(name))
+		ui.Warn("Or pick another name: gh repo create <owner/name> --private, then add that as origin.")
+		ui.Info("Then: gd-sync secrets")
+		return
+	} else {
+		vis := "--private"
+		if c.cfg.GitPrivate == "false" {
+			vis = "--public"
+		}
+		cmd := exec.Command("gh", "repo", "create", name, vis)
+		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+		if cmd.Run() != nil {
+			ui.Warn("Could not create %s — create it yourself, add it as origin, then: gd-sync secrets", name)
+			return
+		}
+		if err := c.git.Quiet("remote", "add", "origin", c.githubURL(name)); err != nil {
+			ui.Fail(err)
+			return
+		}
+		ui.OK("created %s, empty, and added it as origin", name)
+	}
+	if err := cmdSecrets(c); err != nil {
+		ui.Fail(err)
+		ui.Warn("Set secrets later with: gd-sync secrets")
+	}
+}
+
+// githubURL is the clone URL for a repo, over the protocol gh is set to use.
+func (c *ctx) githubURL(name string) string {
+	if out, _ := exec.Command("gh", "config", "get", "git_protocol").Output(); strings.TrimSpace(string(out)) == "ssh" {
+		return "git@github.com:" + name + ".git"
+	}
+	return "https://github.com/" + name + ".git"
 }
 
 // bareDomain turns what was typed — maybe a URL — into a domain:

@@ -40,9 +40,43 @@ type Site struct {
 	Exclude    []string `toml:"exclude"`
 	PHPVersion string   `toml:"php_version"` // what the live site runs, e.g. "8.3"; the devcontainer uses the same
 
+	// Inside the tracked paths, but not kept in git the usual way.
+	Ignore []string `toml:"ignore"` // left out of git; the server's copy is never synced or deployed
+	LFS    []string `toml:"lfs"`    // in git through Git LFS
+	Vendor []Vendor `toml:"vendor"` // built on deploy rather than kept in git
+
 	SSHHost string `toml:"-"`
 	SSHUser string `toml:"-"`
 	SSHPort string `toml:"-"`
+}
+
+// Vendor is a dependency folder, such as a plugin's Composer vendor/, that
+// git leaves out. Deploy runs Build in the folder above it, on main's files,
+// and makes the server's copy match what that built.
+type Vendor struct {
+	Path  string `toml:"path"`
+	Build string `toml:"build"` // empty: never built, the server's copy is left alone
+}
+
+// KeptOut is every path inside the tracked ones that git leaves out: the
+// ignored paths and the vendor folders.
+func (s *Site) KeptOut() []string {
+	out := append([]string{}, s.Ignore...)
+	for _, v := range s.Vendor {
+		out = append(out, v.Path)
+	}
+	return out
+}
+
+// Builds are the vendor folders that deploy builds.
+func (s *Site) Builds() []Vendor {
+	var out []Vendor
+	for _, v := range s.Vendor {
+		if v.Build != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 // localFile is .gd-sync.local.toml.
@@ -172,6 +206,13 @@ func (s *Site) Write() error {
 	fmt.Fprintf(&b, "tracked = %s\n\n", config.List(s.Tracked))
 	b.WriteString("# Never synced or deployed, on top of gd-sync's own list (rsync patterns)\n")
 	fmt.Fprintf(&b, "exclude = %s\n", config.List(s.Exclude))
+	if len(s.Ignore)+len(s.LFS) > 0 {
+		b.WriteString("\n# Inside the tracked paths, but kept out of git. The server's copy is never\n")
+		b.WriteString("# synced or deployed, only downloaded with the rest of the site.\n")
+		fmt.Fprintf(&b, "ignore = %s\n\n", config.List(s.Ignore))
+		b.WriteString("# Kept in git through Git LFS: large binary files.\n")
+		fmt.Fprintf(&b, "lfs = %s\n", config.List(s.LFS))
+	}
 	if s.BuildCmd != "" || s.PublishDir != "" || s.Type == "astro" {
 		b.WriteString("\n# How the site is built, and the folder the build puts on the server\n")
 		fmt.Fprintf(&b, "build_cmd = %s\n", config.String(s.BuildCmd))
@@ -180,6 +221,14 @@ func (s *Site) Write() error {
 	if s.Type == "wordpress" {
 		b.WriteString("\n# The live site's PHP version — the devcontainer runs the same. Check with: gd-sync php\n")
 		fmt.Fprintf(&b, "php_version = %s\n", config.String(s.PHPVersion))
+	}
+	for i, v := range s.Vendor {
+		if i == 0 {
+			b.WriteString("\n# Dependency folders kept out of git. Before every deploy uploads anything, build\n")
+			b.WriteString("# runs in the folder above path, on main's files, and the server's copy of path is\n")
+			b.WriteString("# made to match what it built. Without a build the server's copy is left alone.\n")
+		}
+		fmt.Fprintf(&b, "[[vendor]]\npath = %s\nbuild = %s\n", config.String(v.Path), config.String(v.Build))
 	}
 
 	if err := os.WriteFile(filepath.Join(s.Repo, File), []byte(b.String()), 0o644); err != nil {

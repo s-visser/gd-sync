@@ -164,3 +164,60 @@ func TestGitignoreKeepsOnlyMaintainedPaths(t *testing.T) {
 		}
 	}
 }
+
+// What .gd-sync.toml keeps out of git or in LFS, git must see the same way.
+func TestKeptOutAndLFS(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("needs git")
+	}
+	dir := t.TempDir()
+	if out, err := exec.Command("git", "-C", dir, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v\n%s", err, out)
+	}
+	p := "wp-content/plugins/shop/"
+	s := &site.Site{
+		Repo: dir, Name: "acme", Type: "wordpress", Tracked: []string{"wp-content/plugins/shop"},
+		Ignore: []string{p + "auth/key [1].json"},
+		Vendor: []site.Vendor{{Path: p + "vendor", Build: "composer install"}},
+		LFS:    []string{p + "media/intro video.mp4", p + "media/a*b.bin"},
+	}
+	if err := Gitignore(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := Gitattributes(s); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"auth/key [1].json", "vendor/autoload.php", "shop.php", "media/intro video.mp4", "media/a*b.bin", "media/aXb.bin"} {
+		os.MkdirAll(filepath.Join(dir, filepath.Dir(filepath.FromSlash(p+f))), 0o755)
+		os.WriteFile(filepath.Join(dir, filepath.FromSlash(p+f)), []byte("x"), 0o644)
+	}
+	out, _ := exec.Command("git", "-C", dir, "ls-files", "--others", "--exclude-standard").Output()
+	seen := string(out)
+	for _, f := range []string{"auth/key", "vendor/"} {
+		if strings.Contains(seen, f) {
+			t.Errorf("git sees %s, which is kept out:\n%s", f, seen)
+		}
+	}
+	if !strings.Contains(seen, p+"shop.php") {
+		t.Errorf("git ignores shop.php:\n%s", seen)
+	}
+	for f, want := range map[string]string{"media/intro video.mp4": "lfs", "media/a*b.bin": "lfs", "media/aXb.bin": "unspecified"} {
+		out, err := exec.Command("git", "-C", dir, "check-attr", "filter", "--", p+f).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.HasSuffix(strings.TrimSpace(string(out)), ": "+want) {
+			t.Errorf("filter for %s: %s, want %s", f, out, want)
+		}
+	}
+	if err := s.Write(); err != nil {
+		t.Fatal(err)
+	}
+	back, err := site.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(back.Vendor) != 1 || back.Vendor[0] != s.Vendor[0] || len(back.LFS) != 2 || len(back.Ignore) != 1 {
+		t.Errorf("read back %+v", back)
+	}
+}

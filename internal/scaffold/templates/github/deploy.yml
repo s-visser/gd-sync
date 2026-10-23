@@ -7,6 +7,8 @@ name: Deploy main to server
 # only what main changed since the last sync or deploy, deletes only files git
 # removed, and stops without touching anything if the server changed one of
 # those files in the meantime. Files it doesn't know about are never deleted.
+# Vendor folders ([[vendor]] in .gd-sync.toml) are built first, from main, and
+# if a build fails nothing is uploaded.
 
 on:
   push:
@@ -26,15 +28,26 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          lfs: true
 
       - name: Load site manifest
         run: |
           python3 - >> "$GITHUB_ENV" <<'EOF'
           import tomllib
           site = tomllib.load(open(".gd-sync.toml", "rb"))
-          for key in ("build_cmd", "remote_root"):
+          for key in ("build_cmd", "remote_root", "php_version"):
               print(f"{key.upper()}={site.get(key, '')}")
+          builds = any(v.get("build") for v in site.get("vendor", []))
+          print(f"VENDOR_BUILD={'true' if builds else ''}")
           EOF
+
+      - name: Set up PHP and Composer
+        if: env.VENDOR_BUILD != ''
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION || '8.3' }}
+          tools: composer
+          coverage: none
 
       - name: Set up Node
         if: env.BUILD_CMD != ''

@@ -46,8 +46,18 @@ func List(colour, marker string, lines []string) {
 
 var stdin = bufio.NewReader(os.Stdin)
 
-// SetInput makes Ask read its answers from r. For tests.
-func SetInput(r io.Reader) { stdin = bufio.NewReader(r) }
+// scripted is set when answers come from SetInput rather than a person.
+var scripted bool
+
+// SetInput makes Ask, Confirm and Choose read their answers from r, as if a
+// person were typing them. For tests; os.Stdin puts things back.
+func SetInput(r io.Reader) {
+	stdin = bufio.NewReader(r)
+	scripted = r != os.Stdin
+}
+
+// interactive reports whether someone is there to answer.
+func interactive() bool { return scripted || term.IsTerminal(int(os.Stdin.Fd())) }
 
 func readLine() (string, bool) {
 	s, err := stdin.ReadString('\n')
@@ -62,7 +72,7 @@ func Confirm(q string) bool {
 	if Yes {
 		return true
 	}
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
+	if !interactive() {
 		return false
 	}
 	fmt.Printf("%s%s%s [y/N] ", B, q, N)
@@ -72,6 +82,33 @@ func Confirm(q string) bool {
 		return true
 	}
 	return false
+}
+
+// Choose asks the user to pick one of the options and returns its index; the
+// first option is the default. It returns -1 when nobody can answer — no
+// terminal, or -y, which answers yes/no questions but can't pick for you.
+func Choose(q string, options ...string) int {
+	if Yes || !interactive() {
+		return -1
+	}
+	fmt.Printf("%s%s%s\n", B, q, N)
+	for i, o := range options {
+		fmt.Printf("    %d) %s\n", i+1, o)
+	}
+	for {
+		fmt.Printf("  Choice %s[1]%s ", DIM, N)
+		a, ok := readLine()
+		a = strings.TrimSpace(a)
+		if a == "" || !ok {
+			return 0
+		}
+		for i := range options {
+			if a == fmt.Sprint(i+1) {
+				return i
+			}
+		}
+		Warn("Type a number from 1 to %d", len(options))
+	}
 }
 
 // Ask prompts on stderr and returns the answer, or def when it is empty.

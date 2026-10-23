@@ -40,6 +40,7 @@ func newWorld(t *testing.T, siteType, tracked, publishDir string) *world {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("SSH_AUTH_SOCK", "")
+	t.Setenv("COPYFILE_DISABLE", "1") // macOS tar would add ._ files for extended attributes
 	t.Setenv("GD_SYNC_HOME", filepath.Join(home, "gd-sync"))
 	for _, k := range []string{"GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"} {
 		t.Setenv(k, "Test")
@@ -601,5 +602,85 @@ func TestNewWithGlobalDefaults(t *testing.T) {
 	}
 	if got := w.read(s.Repo, "wp-content/themes/t/style.css"); got != "x" {
 		t.Errorf("the live site should be copied in, got %q", got)
+	}
+}
+
+// The server's settings decide the PHP version; the site's header only
+// when the server can't say, or only has its command-line PHP to go by.
+func TestPickPHP(t *testing.T) {
+	selector := phpFinding{"8.5", "8.5.1", selectorSource}
+	header := phpFinding{"8.4", "8.4.25", "header"}
+	if got, disagree := pickPHP(selector, header); got != selector || !disagree {
+		t.Errorf("selector vs header: %+v, disagree=%v", got, disagree)
+	}
+	if got, disagree := pickPHP(phpFinding{"8.4", "", selectorSource}, header); got.full != "8.4.25" || disagree {
+		t.Errorf("same version should take the header's full release: %+v %v", got, disagree)
+	}
+	cli := phpFinding{"8.1", "8.1.2", "command-line PHP (may differ from the website)"}
+	if got, disagree := pickPHP(cli, header); got != header || disagree {
+		t.Errorf("command-line PHP should not beat the header: %+v", got)
+	}
+	if got, _ := pickPHP(phpFinding{}, header); got != header {
+		t.Errorf("no server answer: %+v", got)
+	}
+	if got, _ := pickPHP(selector, phpFinding{}); got != selector {
+		t.Errorf("no header: %+v", got)
+	}
+}
+
+// new builds the folder and downloads the site, maintained paths included,
+// but commits and pushes nothing: the first commit is yours.
+func TestNewLeavesTheFirstCommitToYou(t *testing.T) {
+	w := newWorld(t, "wordpress", "", "")
+	projects := t.TempDir()
+	g := &config.Global{Path: filepath.Join(os.Getenv("GD_SYNC_HOME"), "config.toml"), GitPrivate: "true", DefaultType: "wordpress"}
+	for k, v := range map[string]string{"projects_dir": projects, "ssh_host": w.srv.Host, "ssh_user": "test", "ssh_port": w.srv.Port} {
+		g.Set(k, v)
+	}
+	if err := g.Save(); err != nil {
+		t.Fatal(err)
+	}
+	w.write(w.server, "wp-content/themes/t/style.css", "body{}\n")
+	w.write(w.server, "wp-content/plugins/other/other.php", "<?php\n")
+
+	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n\n" + w.server + "\nwp-content/themes/t\n\n"))
+	t.Cleanup(func() { ui.SetInput(os.Stdin) })
+	if err := run([]string{"new"}); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(projects, "acme.example")
+	git := func(args ...string) (string, error) {
+		out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	if out, err := git("rev-parse", "--verify", "-q", "HEAD"); err == nil {
+		t.Fatalf("new made a commit: %s", out)
+	}
+	if w.read(dir, "wp-content/themes/t/style.css") != "body{}\n" || w.read(dir, "wp-content/plugins/other/other.php") != "<?php\n" {
+		t.Fatal("the site was not downloaded, maintained paths included")
+	}
+	untracked, _ := git("ls-files", "--others", "--exclude-standard")
+	if !strings.Contains(untracked, "wp-content/themes/t/style.css") || strings.Contains(untracked, "other.php") {
+		t.Errorf("git should offer the maintained path, and only that, besides gd-sync's files:\n%s", untracked)
+	}
+
+	// Before the first commit, sync says what to do.
+	t.Chdir(dir)
+	if err := w.gd("sync"); err == nil || !strings.Contains(err.Error(), "first commit") {
+		t.Errorf("sync before the first commit: %v", err)
+	}
+
+	// The first commit as suggested: sync and deploy take it as the server's state.
+	if out, err := git("add", "-A"); err != nil {
+		t.Fatal(out)
+	}
+	if out, err := git("commit", "-qm", "[server-sync] Live server state"); err != nil {
+		t.Fatal(out)
+	}
+	head, _ := git("rev-parse", "HEAD")
+	w.mustGD("sync")
+	w.mustGD("deploy")
+	if now, _ := git("rev-parse", "HEAD"); now != head {
+		t.Error("sync after the first commit found differences")
 	}
 }
