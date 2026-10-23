@@ -18,7 +18,7 @@ _db/
 // you maintain: gd-sync's own files. Everything else in the folder is the
 // local mirror of the live site.
 var gitignoreScaffold = []string{
-	".gitignore", ".gitattributes", ".gd-sync.toml", ".devcontainer/", ".github/", ".run/", "GD-SYNC.md", "README.md",
+	".gitignore", ".gitattributes", ".gd-sync.toml", ".devcontainer/", ".github/", ".run/", "GD-SYNC.md", "README.md", "_migrations/",
 }
 
 // gitignoreNever stays out of git even inside a path you maintain.
@@ -79,6 +79,11 @@ const cheatSheet = "# Working on this site\n\n" +
 	"| `gd-sync sync` | update `main` and the local copy with what's on the server right now |\n" +
 	"| `gd-sync status` | what differs between the server and `main` (changes nothing) |\n" +
 	"| `gd-sync db` | download the live database into `_db/` |\n" +
+	"| `gd-sync wp [--local] …` | WP-CLI; live writes require confirmation and a database backup |\n" +
+	"| `gd-sync db --restore [file]` | restore a live database backup |\n" +
+	"| `gd-sync migrate new <message>` | create a revision in `_migrations/` |\n" +
+	"| `gd-sync migrate` | apply pending revisions locally; deploy applies them to live |\n" +
+	"| `gd-sync migrate status` / `history` | inspect pending revisions / dependency history |\n" +
 	"| `gd-sync up` / `gd-sync down` | start / stop the local Docker site (from your computer) |\n" +
 	"| `gd-sync merge` | the safe way to go live: sync, merge, deploy |\n" +
 	"| `gd-sync deploy` | upload `main` by hand, skipping GitHub |\n" +
@@ -91,6 +96,7 @@ const cheatSheet = "# Working on this site\n\n" +
 	"| `.gitignore` | generated from `TRACKED` — run `gd-sync scaffold` after changing it |\n" +
 	"| `.gd-sync.local.toml` | your SSH details — not committed |\n" +
 	"| `_db/` | database dumps — not committed |\n" +
+	"| `_migrations/` | committed PHP migrations with revision/down_revision and upgrade/downgrade closures |\n" +
 	"| `.devcontainer/` | the local Docker environment, with a local `wp-config.php` and `.htaccess` |\n" +
 	"| `.github/workflows/` | the sync and deploy workers |\n\n" +
 	"## What git leaves out\n\n" +

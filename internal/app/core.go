@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/s-visser/gd-sync/internal/gitx"
+	"github.com/s-visser/gd-sync/internal/migrate"
 	"github.com/s-visser/gd-sync/internal/remote"
 	"github.com/s-visser/gd-sync/internal/site"
 	"github.com/s-visser/gd-sync/internal/transfer"
@@ -282,11 +283,11 @@ func cmdStatus(c *ctx) error {
 	ui.List(ui.R, "- ", cmp.Gone)
 	if len(cmp.New)+len(cmp.Changed)+len(cmp.Gone) == 0 {
 		ui.OK("Identical")
-		return nil
+		return c.statusMigrations()
 	}
 	ui.Info("+ only on the server   ~ differs   - only in main")
 	ui.Info("Run 'gd-sync sync' to fold these into main")
-	return nil
+	return c.statusMigrations()
 }
 
 // cmdDeploy ships main to the server by hand.
@@ -305,6 +306,19 @@ func cmdDeploy(c *ctx) error {
 	if c.git.Status("--untracked-files=no") != "" {
 		return errors.New("main has uncommitted changes — commit or stash them first")
 	}
+	subject, err := c.git.Output("log", "-1", "--format=%s", "main")
+	if err != nil {
+		return err
+	}
+	if strings.Contains(subject, "[server-sync]") {
+		ui.Info("Server snapshot — nothing to deploy")
+		return nil
+	}
+	unlock, err := c.lockLive()
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	if c.s.PublishDir != "" {
 		return c.deployBuild(conn)
 	}
@@ -318,6 +332,19 @@ func cmdDeploy(c *ctx) error {
 func (c *ctx) deployMain(conn *remote.Conn) error {
 	ui.Step("Deploying %s  [main -> server]", c.s.Name)
 	m := c.matcher(c.s.Tracked)
+	var steps []migrate.Step
+	if c.s.Type == "wordpress" {
+		chain, err := c.migrations("main")
+		if err != nil {
+			return err
+		}
+		if len(chain) > 0 {
+			steps, err = c.migrationPlan(chain, false, "head")
+			if err != nil {
+				return err
+			}
+		}
+	}
 	base, err := c.deployBase(conn)
 	if err != nil {
 		return err
@@ -331,7 +358,7 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 		return err
 	}
 	changed := transfer.ChangedPaths(baseTree, main)
-	if len(changed) == 0 {
+	if len(changed) == 0 && len(steps) == 0 {
 		ui.OK("Server already matches main — nothing to deploy")
 		return c.recordDeployed(conn)
 	}
@@ -354,7 +381,7 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 		return errors.New(`The server changed these since they were last synced or deployed. Deploying would overwrite that.
   Run 'gd-sync merge' to fold the server's changes in and deploy in one go.`)
 	}
-	if len(up)+len(del) == 0 {
+	if len(up)+len(del) == 0 && len(steps) == 0 {
 		ui.OK("Server already matches main — nothing to deploy")
 		return c.recordDeployed(conn)
 	}
@@ -379,12 +406,26 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 		ui.Info("%s, as built: %d to upload, %d to remove", b.v.Path, len(b.up), len(b.del))
 	}
 	ui.Say("")
+	printMigrations(steps)
 	if !ui.Confirm("Push these to the LIVE site?") {
 		ui.Say("Cancelled.")
 		return nil
 	}
 
-	c.backup(conn)
+	dbBackup := ""
+	if len(steps) > 0 {
+		dbBackup, err = c.backupDB()
+		if err != nil {
+			return err
+		}
+	}
+	fileBackup, err := c.backup(conn)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		ui.Info("Pre-deploy files: %s", fileBackup)
+	}()
 	ui.Step("Uploading")
 	if err := transfer.UploadBlobs(conn, c.s.RemoteRoot, c.git, main, up, c.isLFS); err != nil {
 		return err
@@ -399,6 +440,9 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 		if err := transfer.RemoveRemote(conn, c.s.RemoteRoot, b.del); err != nil {
 			return err
 		}
+	}
+	if err := c.applyMigrations(false, steps, dbBackup); err != nil {
+		return fmt.Errorf("%w\nFile backup: %s\nRestore files over SSH: tar xzf %s -C %s\nThis overlays old files; inspect newly uploaded files separately.", err, fileBackup, fileBackup, remote.Quote(c.s.RemoteRoot))
 	}
 	if err := c.recordDeployed(conn); err != nil {
 		return err
@@ -518,7 +562,9 @@ func (c *ctx) deployBuild(conn *remote.Conn) error {
 		return nil
 	}
 
-	c.backup(conn)
+	if _, err := c.backup(conn); err != nil {
+		return err
+	}
 	ui.Step("Uploading")
 	if err := transfer.UploadDir(conn, c.s.RemoteRoot, dir, up); err != nil {
 		return err
@@ -535,19 +581,26 @@ func (c *ctx) deployBuild(conn *remote.Conn) error {
 
 // backup tars the server's current files into ~/gd-sync-backups first,
 // keeping the newest 20 for this site.
-func (c *ctx) backup(conn *remote.Conn) {
+func (c *ctx) backup(conn *remote.Conn) (string, error) {
 	ui.Step("Backing up the server's current files")
-	name := fmt.Sprintf("~/gd-sync-backups/%s-%s.tar.gz", c.s.Name, stamp("20060102-150405"))
-	paths := "."
+	name := "~/gd-sync-backups/" + remote.Quote(c.s.Name+"-"+stamp("20060102-150405.000000000")+".tar.gz")
+	// Missing maintained paths are legitimate (a deploy may introduce them).
+	// Only archive the existing ones, keeping all shell words quoted.
+	paths := "set -- .; "
 	if len(c.s.Tracked) > 0 {
-		paths = remote.QuoteAll(c.s.Tracked)
+		paths = "set --; "
+		for _, p := range c.s.Tracked {
+			q := remote.Quote(p)
+			paths += "if test -e " + q + "; then set -- \"$@\" " + q + "; fi; "
+		}
 	}
-	cmd := fmt.Sprintf("mkdir -p ~/gd-sync-backups && cd %s && tar czf %s %s 2>/dev/null", remote.Quote(c.s.RemoteRoot), name, paths)
+	cmd := "umask 077 && mkdir -p ~/gd-sync-backups && cd " + remote.Quote(c.s.RemoteRoot) + " && { " + paths + "if test \"$#\" -eq 0; then tar czf " + name + ".partial -T /dev/null; else tar czf " + name + ".partial -- \"$@\"; fi; } && mv " + name + ".partial " + name
 	if err := conn.Run(cmd, nil, nil); err != nil {
-		ui.Warn("Backup failed — continuing")
-		return
+		_ = conn.Run("rm -f -- "+name+".partial", nil, nil)
+		return "", fmt.Errorf("File backup failed; deploy stopped: %w", err)
 	}
 	ui.OK("%s", name)
-	prune := fmt.Sprintf("ls -1t ~/gd-sync-backups/%s-*.tar.gz 2>/dev/null | tail -n +21 | while IFS= read -r f; do rm -f -- \"$f\"; done", c.s.Name)
+	prune := "ls -1t ~/gd-sync-backups/" + remote.Quote(c.s.Name+"-") + "*.tar.gz 2>/dev/null | tail -n +21 | while IFS= read -r f; do rm -f -- \"$f\"; done"
 	_ = conn.Run(prune, nil, nil)
+	return name, nil
 }

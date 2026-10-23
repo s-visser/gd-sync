@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"github.com/s-visser/gd-sync/internal/gitx"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -242,5 +243,26 @@ func TestKeptOutAndLFS(t *testing.T) {
 	}
 	if len(back.Vendor) != 1 || back.Vendor[0] != s.Vendor[0] || len(back.LFS) != 2 || len(back.Ignore) != 1 {
 		t.Errorf("read back %+v", back)
+	}
+}
+
+func TestMigrationsStayInGit(t *testing.T) {
+	dir := t.TempDir()
+	s := &site.Site{Repo: dir, Type: "wordpress", Tracked: []string{"wp-content"}}
+	if err := Gitignore(s); err != nil {
+		t.Fatal(err)
+	}
+	g := gitx.Repo{Dir: dir}
+	if err := g.Quiet("init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "_migrations"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "_migrations", "example.php"), []byte("<?php"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if g.OK("check-ignore", "-q", "_migrations/example.php") {
+		t.Fatal("scaffold ignores migrations")
 	}
 }

@@ -388,12 +388,127 @@ admin, and it isn't code. The local copy has it, so images work locally.
 **`wp-config.php` is never touched.** It holds the live DB credentials and
 salts. The local copy has it, git doesn't, and no deploy sends it.
 
+## WordPress commands and database migrations
+
+For a one-off live change, use WP-CLI through gd-sync:
+
+```bash
+gd-sync wp option get blog_public
+gd-sync wp option update blog_public 1
+gd-sync wp --local search-replace old.example.test new.example.test
+gd-sync -y wp option update blog_public 1
+```
+
+Live commands run in this site's `remote_root` using `~/wp-cli.phar`.
+Known built-in read commands skip confirmation and backup. Everything else,
+including custom plugin commands, requires confirmation and a successful live
+database export first. A database backup does not undo WP-CLI file changes or
+external effects such as sending email. `--local` runs `wp` in the devcontainer.
+Put gd-sync's `-y` before `wp` (or immediately after it); once the WP-CLI command
+starts, its arguments, including `--yes`, are passed through unchanged.
+Target overrides such as `--path`, `--ssh` and `@aliases` are refused so the
+backup belongs to the site you selected.
+
+For changes that should travel with code, use revision migrations:
+
+```bash
+gd-sync scaffold                          # existing sites: let git keep _migrations/
+gd-sync migrate new "Enable WooCommerce HPOS"
+# Edit the generated PHP file on develop.
+gd-sync db                                # includes live's migration revision
+gd-sync migrate                           # upgrade the LOCAL database to head
+gd-sync migrate current
+gd-sync migrate history
+gd-sync migrate downgrade -1               # rehearse reversing the last change
+gd-sync migrate upgrade head
+gd-sync merge                             # commit first; deploy applies pending revisions
+```
+
+Each `_migrations/<revision>_<description>.php` follows WireLoft's Alembic
+convention, with explicit metadata and upgrade/downgrade functions:
+
+```php
+<?php
+$revision = '3f9a1c2b7d40';
+$down_revision = null; // or the previous migration's revision
+
+$upgrade = function () {
+    update_option('example_feature_enabled', 1);
+};
+
+$downgrade = function () {
+    delete_option('example_feature_enabled');
+};
+```
+
+Revisions are 12 lowercase hex characters; `migrate new` generates them and
+links to the current head. Files run by dependency order, regardless of their
+names or dates. There must be one root and one unbranched path to the head.
+Duplicate revisions, missing parents, cycles and competing heads stop the
+operation before file upload. If two branches add migrations from the same
+parent, link one after the other before merging. Keep already applied files
+and their revision metadata unchanged.
+
+`migrate`, `current`, `status`, `upgrade` and `downgrade` use the local database
+by default. `migrate status` lists pending revisions. Add `--live` to operate on
+live using migrations from **committed main**. Targets accept `head`, `base`,
+a revision, a unique revision prefix, or relative steps such as `+2` and `-1`.
+`gd-sync status` also lists pending live migrations for your working branch.
+Astro sites have no database migrations.
+
+The database stores its current revision in the `gd_sync_db_revision` option.
+Pulling or restoring a database carries that revision with it; a fresh GitHub
+runner needs no local migration state. Deploy checks pending revisions before
+upload, backs up both the live database and existing maintained files, uploads
+code and vendor builds, then runs upgrades. A migration-only commit runs too.
+`[server-sync]` commits skip deployment and migrations entirely. Migrations are
+sent through [WP-CLI's stdin runner](https://developer.wordpress.org/cli/commands/eval-file/)
+and never uploaded into the public web root or replaced by a server sync.
+
+Migrations require PHP 7.0 or newer and run with WordPress plugins and themes
+loaded. Declare `global $wpdb` inside a closure when needed. Throw on failure;
+`gd_sync_query($sql, ...$args)` prepares SQL arguments and throws on query
+errors. Each migration and its revision update use a transaction. MySQL DDL
+such as `ALTER TABLE` commits implicitly, and nontransactional tables, caches,
+files and external effects cannot be rolled back by that transaction. Write
+migrations to be safe to retry and check WordPress API return values.
+
+A failure stops later revisions and leaves the deploy unsuccessful. It prints
+the database backup and restore command, plus the file archive and SSH recovery
+command. Files stay where the deploy put them: restoring SQL automatically
+could discard live changes made during deployment. Inspect the failure, then
+either fix and retry or explicitly restore the database and files together.
+
+Live deploys, migrations, WP-CLI writes and restores share a site lock in
+`~/.gd-sync/<site>/write-lock`. Migration steps also use a database advisory
+lock. If an interrupted connection leaves the site lock behind, verify that
+no write is running before removing that directory over SSH.
+
 ## Backups
 
-Every deploy — worker or manual — tars the current server copy to
-`~/gd-sync-backups/` on the server first, keeping the last 20 per site.
+Every deploy that makes changes — worker or manual — tars the current maintained
+server files to `~/gd-sync-backups/` first, keeping the last 20 archives per site.
+Backups must succeed before files are changed. Archives and database exports
+are private and get unique timestamped names.
 
 ```bash
 gd-sync shell
 cd ~/public_html/<domain> && tar xzf ~/gd-sync-backups/<site>-20261022-143000.tar.gz
 ```
+
+Live WP-CLI writes and pending deploy migrations also export the database there,
+keeping the newest 20 SQL backups per site. Restore a chosen backup, or omit the
+filename to select the latest:
+
+```bash
+gd-sync db --restore test-db-20261023-150405.123456789.sql
+gd-sync db --restore
+```
+
+Restore confirms the live site, takes a fresh rescue backup, imports the selected
+server-side SQL dump, and flushes WordPress's object cache. It accepts only this
+site's backups; it cannot push a local database. The chosen backup is preserved
+while creating the rescue backup, even when it would age out of retention.
+SQL import restores the dumped tables; tables created after the export may need
+separate cleanup. File archive extraction similarly overlays old files and
+does not remove newly uploaded ones. Inspect those additions during recovery.

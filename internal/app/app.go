@@ -40,6 +40,9 @@ reading that repo's own .gd-sync.toml file. No site name to remember or type.
   gd-sync deploy          push main to the server by hand
 
   gd-sync db              download the live database into _db/
+  gd-sync db --restore [file]  restore a live database backup (latest by default)
+  gd-sync wp [--local] …  run WP-CLI, backing up before live writes
+  gd-sync migrate …       revision migrations (local by default; --live for live)
   gd-sync up / down       start / stop the devcontainer
   gd-sync term            open a terminal inside the devcontainer
   gd-sync php             make the devcontainer run the live site's PHP version
@@ -70,7 +73,11 @@ func Main(args []string) int {
 
 func run(args []string) error {
 	var rest []string
-	for _, a := range args {
+	for i, a := range args {
+		if len(rest) > 0 && rest[0] == "wp" && a != "-y" && a != "--yes" && a != "--local" {
+			rest = append(rest, args[i:]...)
+			break
+		}
 		switch a {
 		case "-y", "--yes":
 			ui.Yes = true
@@ -112,7 +119,20 @@ func run(args []string) error {
 		return cmdNew(cfg)
 	case "adopt":
 		return cmdAdopt(cfg, arg(0, "."))
+	case "wp":
+		return inSite(cfg, "", func(c *ctx) error { return cmdWP(c, rest) })
+	case "migrate":
+		return inSite(cfg, "", func(c *ctx) error { return cmdMigrate(c, rest) })
 	case "sync", "status", "db":
+		if cmd == "db" && len(rest) > 0 && rest[0] == "--restore" {
+			if len(rest) > 2 {
+				return errors.New("Usage: gd-sync db --restore [file]")
+			}
+			return inSite(cfg, "", func(c *ctx) error { return cmdDBRestore(c, arg(1, "")) })
+		}
+		if len(rest) > 0 && !(len(rest) == 1 && rest[0] == "--all") {
+			return fmt.Errorf("Unknown %s arguments: %s", cmd, strings.Join(rest, " "))
+		}
 		run := map[string]func(*ctx) error{"sync": cmdSync, "status": cmdStatus, "db": cmdDB}[cmd]
 		if arg(0, "") == "--all" {
 			return forAll(cfg, run)

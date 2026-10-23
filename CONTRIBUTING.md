@@ -10,6 +10,7 @@ internal/transfer/      moving files without rsync: lister, compare, tar streams
 internal/remote/        the SSH connection, auth and known_hosts
 internal/remote/sshtest an in-process SSH server for tests
 internal/gitx/          runs the real git binary
+internal/migrate/       PHP revisions, dependency validation, planning and runner
 internal/site/          a site's .gd-sync.toml / .gd-sync.local.toml
 internal/config/        machine-wide settings and the site registry
 internal/scaffold/      everything written into a new site, templates included
@@ -61,7 +62,17 @@ with and without a conflict, an Astro deploy — over real SSH against
 server side uses BSD tar; CI runs the same tests on Ubuntu with GNU tar, which
 is what cPanel servers have.
 
-CI runs everything on Ubuntu, macOS and Windows.
+CI runs everything on Ubuntu, macOS and Windows. Migration runner tests execute
+with a locally installed `php`; if it is unavailable they skip. To run them
+with an existing PHP Docker image instead:
+
+```bash
+GD_SYNC_TEST_PHP_DOCKER=php:8.3-cli go test ./internal/migrate -count=1
+```
+
+The database command integration tests use a fake WP-CLI executable over the
+local SSH test server and require `python3`. They verify orchestration and
+recovery without touching a live database.
 
 ## Releasing
 
