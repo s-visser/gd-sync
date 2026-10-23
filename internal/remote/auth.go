@@ -60,6 +60,22 @@ func authMethods(user, host string, typed *bool) []ssh.AuthMethod {
 	}
 }
 
+// plainKeySigners loads the key files that need no passphrase, without
+// asking anything.
+func plainKeySigners() []ssh.Signer {
+	var signers []ssh.Signer
+	for _, name := range KeyFiles {
+		pem, err := os.ReadFile(filepath.Join(SSHDir(), name))
+		if err != nil {
+			continue
+		}
+		if s, err := ssh.ParsePrivateKey(pem); err == nil {
+			signers = append(signers, s)
+		}
+	}
+	return signers
+}
+
 // keyFileSigners loads the key files that exist, asking for a passphrase
 // when one is protected — unless the agent already holds that key.
 func keyFileSigners(inAgent []ssh.Signer) ([]ssh.Signer, error) {

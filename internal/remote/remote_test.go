@@ -4,11 +4,13 @@ import (
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/pem"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"golang.org/x/crypto/ssh"
@@ -112,6 +114,60 @@ func TestKeyFileUsedAfterEmptyAgent(t *testing.T) {
 		t.Fatalf("with an empty agent running: %v", err)
 	}
 	conn.Close()
+}
+
+// refusingAgent holds a key but won't sign with it, like the agent a
+// JetBrains IDE runs in a devcontainer while its "which key?" dialog is open.
+type refusingAgent struct{ agent.Agent }
+
+func (refusingAgent) Sign(ssh.PublicKey, []byte) (*ssh.Signature, error) {
+	return nil, errors.New("refused")
+}
+
+// A key file that needs no passphrase is used on its own: an agent that
+// refuses to sign must not push the login on to a password prompt, and isn't
+// even asked.
+func TestKeyFileUsedBeforeRefusingAgent(t *testing.T) {
+	setupHome(t)
+	srv := sshtest.Start(t)
+	dir, err := os.MkdirTemp("/tmp", "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	sock := filepath.Join(dir, "s")
+	l, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	keyring := agent.NewKeyring()
+	_, priv, _ := ed25519.GenerateKey(rand.Reader)
+	keyring.Add(agent.AddedKey{PrivateKey: priv})
+	var asked atomic.Bool
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			asked.Store(true)
+			go agent.ServeAgent(refusingAgent{keyring}, c)
+		}
+	}()
+	t.Setenv("SSH_AUTH_SOCK", sock)
+
+	conn, err := remote.Dial(srv.Host, "test", srv.Port)
+	if err != nil {
+		t.Fatalf("with a refusing agent running: %v", err)
+	}
+	if conn.Typed {
+		t.Error("a password was asked for")
+	}
+	conn.Close()
+	if asked.Load() {
+		t.Error("the agent was asked, though the key file got in")
+	}
 }
 
 func TestRefuseChangedHostKey(t *testing.T) {
