@@ -110,7 +110,7 @@ func run(args []string) error {
 	case "new":
 		return cmdNew(cfg)
 	case "adopt":
-		return cmdAdopt(arg(0, "."))
+		return cmdAdopt(cfg, arg(0, "."))
 	case "sync", "status", "db":
 		run := map[string]func(*ctx) error{"sync": cmdSync, "status": cmdStatus, "db": cmdDB}[cmd]
 		if arg(0, "") == "--all" {

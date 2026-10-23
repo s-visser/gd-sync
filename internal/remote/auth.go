@@ -23,7 +23,7 @@ var KeyFiles = []string{"id_ed25519", "id_ecdsa", "id_rsa"}
 // SSHDir is ~/.ssh (%USERPROFILE%\.ssh on Windows).
 func SSHDir() string { return filepath.Join(config.UserHome(), ".ssh") }
 
-func authMethods(user, host string) []ssh.AuthMethod {
+func authMethods(user, host string, typed *bool) []ssh.AuthMethod {
 	// One publickey method for the agent and the key files together: the
 	// client tries each method only once, so a second one would never run
 	// after an agent that is up but doesn't hold the right key.
@@ -38,9 +38,11 @@ func authMethods(user, host string) []ssh.AuthMethod {
 	return []ssh.AuthMethod{
 		ssh.PublicKeysCallback(keys),
 		ssh.RetryableAuthMethod(ssh.PasswordCallback(func() (string, error) {
+			*typed = true
 			return ui.Secret(fmt.Sprintf("Password for %s@%s: ", user, host))
 		}), 3),
 		ssh.RetryableAuthMethod(ssh.KeyboardInteractive(func(_, _ string, qs []string, echo []bool) ([]string, error) {
+			*typed = *typed || len(qs) > 0
 			answers := make([]string, len(qs))
 			for i, q := range qs {
 				if echo[i] {

@@ -21,11 +21,14 @@ type Global struct {
 	GitOwner    string // GitHub user or org that new repos belong to
 	GitPrivate  string // "true" or "false" for new repos
 	DefaultType string // "wordpress" or "astro"
+	SSHHost     string // the server new sites are on, when they share one
+	SSHUser     string
+	SSHPort     string
 	Path        string
 }
 
 // Keys lists the settings in the order they are shown and saved.
-var Keys = []string{"projects_dir", "git_owner", "git_private", "default_type"}
+var Keys = []string{"projects_dir", "git_owner", "git_private", "default_type", "ssh_host", "ssh_user", "ssh_port"}
 
 // globalFile is config.toml as written on disk.
 type globalFile struct {
@@ -33,6 +36,9 @@ type globalFile struct {
 	GitOwner    *string `toml:"git_owner"`
 	GitPrivate  *bool   `toml:"git_private"`
 	DefaultType *string `toml:"default_type"`
+	SSHHost     *string `toml:"ssh_host"`
+	SSHUser     *string `toml:"ssh_user"`
+	SSHPort     *int    `toml:"ssh_port"`
 }
 
 // Home is the folder holding the settings and the registry:
@@ -79,6 +85,7 @@ func Load() (*Global, error) {
 		ProjectsDir: filepath.Join(UserHome(), "Projects"),
 		GitPrivate:  "true",
 		DefaultType: "wordpress",
+		SSHPort:     "22",
 		Path:        os.Getenv("GD_SYNC_CONFIG"),
 	}
 	if g.Path == "" {
@@ -88,13 +95,19 @@ func Load() (*Global, error) {
 	if err := ReadTOML(g.Path, &f); err != nil {
 		return nil, err
 	}
-	for k, v := range map[string]*string{"projects_dir": f.ProjectsDir, "git_owner": f.GitOwner, "default_type": f.DefaultType} {
+	for k, v := range map[string]*string{
+		"projects_dir": f.ProjectsDir, "git_owner": f.GitOwner, "default_type": f.DefaultType,
+		"ssh_host": f.SSHHost, "ssh_user": f.SSHUser,
+	} {
 		if v != nil {
 			g.Set(k, *v)
 		}
 	}
 	if f.GitPrivate != nil {
 		g.GitPrivate = strconv.FormatBool(*f.GitPrivate)
+	}
+	if f.SSHPort != nil {
+		g.SSHPort = strconv.Itoa(*f.SSHPort)
 	}
 	return g, nil
 }
@@ -110,6 +123,12 @@ func (g *Global) Get(key string) (string, bool) {
 		return g.GitPrivate, true
 	case "default_type":
 		return g.DefaultType, true
+	case "ssh_host":
+		return g.SSHHost, true
+	case "ssh_user":
+		return g.SSHUser, true
+	case "ssh_port":
+		return g.SSHPort, true
 	}
 	return "", false
 }
@@ -132,6 +151,16 @@ func (g *Global) Set(key, value string) error {
 		g.GitPrivate = strconv.FormatBool(b)
 	case "default_type":
 		g.DefaultType = value
+	case "ssh_host":
+		g.SSHHost = value
+	case "ssh_user":
+		g.SSHUser = value
+	case "ssh_port":
+		n, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || n < 1 || n > 65535 {
+			return fmt.Errorf("%q is not a port number", value)
+		}
+		g.SSHPort = strconv.Itoa(n)
 	default:
 		return ErrUnknownKey
 	}
@@ -157,7 +186,12 @@ func (g *Global) Save() error {
 	fmt.Fprintf(&b, "git_owner = %s\n", String(g.GitOwner))
 	fmt.Fprintf(&b, "git_private = %s\n\n", g.GitPrivate)
 	b.WriteString("# The site type 'gd-sync new' suggests: \"wordpress\" or \"astro\"\n")
-	fmt.Fprintf(&b, "default_type = %s\n", String(g.DefaultType))
+	fmt.Fprintf(&b, "default_type = %s\n\n", String(g.DefaultType))
+	b.WriteString("# The server 'gd-sync new' suggests, for when your sites share one.\n")
+	b.WriteString("# GoDaddy dashboard -> your hosting -> Settings -> SSH access -> Manage\n")
+	fmt.Fprintf(&b, "ssh_host = %s\n", String(g.SSHHost))
+	fmt.Fprintf(&b, "ssh_user = %s\n", String(g.SSHUser))
+	fmt.Fprintf(&b, "ssh_port = %s\n", g.SSHPort)
 	if err := os.MkdirAll(filepath.Dir(g.Path), 0o755); err != nil {
 		return err
 	}

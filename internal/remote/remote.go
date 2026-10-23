@@ -18,6 +18,7 @@ import (
 type Conn struct {
 	client *ssh.Client
 	Target string // user@host:port, for messages
+	Typed  bool   // a password was typed: no SSH key got in
 }
 
 // Dial connects and authenticates: SSH agent first, then the usual key files
@@ -29,9 +30,10 @@ func Dial(host, user, port string) (*Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+	var typed bool
 	cfg := &ssh.ClientConfig{
 		User:              user,
-		Auth:              authMethods(user, host),
+		Auth:              authMethods(user, host, &typed),
 		HostKeyCallback:   hostKey,
 		HostKeyAlgorithms: algos,
 		Timeout:           20 * time.Second,
@@ -40,7 +42,7 @@ func Dial(host, user, port string) (*Conn, error) {
 	if err != nil {
 		return nil, fmt.Errorf("Cannot reach %s@%s: %w", user, addr, err)
 	}
-	return &Conn{client: client, Target: user + "@" + addr}, nil
+	return &Conn{client: client, Target: user + "@" + addr, Typed: typed}, nil
 }
 
 func (c *Conn) Close() error { return c.client.Close() }

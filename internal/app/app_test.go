@@ -526,8 +526,8 @@ func TestPHPVersionHelpers(t *testing.T) {
 		w.Header().Set("X-Powered-By", "PHP/7.4.33")
 	}))
 	defer srv.Close()
-	if got := headerPHP(srv.URL); got != "7.4" {
-		t.Errorf("headerPHP = %q", got)
+	if v, full := headerPHP(srv.URL); v != "7.4" || full != "7.4.33" {
+		t.Errorf("headerPHP = %q, %q", v, full)
 	}
 }
 
@@ -565,5 +565,41 @@ func TestPHPDetection(t *testing.T) {
 	w.mustGD("php")
 	if !strings.Contains(w.read(w.repo, ".gd-sync.toml"), "php_version = \"7.3\"\n") {
 		t.Errorf("a parent folder's .htaccess applies too:\n%s", w.read(w.repo, ".gd-sync.toml"))
+	}
+}
+
+// With the server in the global settings, new needs only the domain: every
+// other question takes its default. (Only the web root is typed here,
+// because the test server's differs from GoDaddy's.)
+func TestNewWithGlobalDefaults(t *testing.T) {
+	w := newWorld(t, "wordpress", "", "")
+	projects := t.TempDir()
+	g := &config.Global{Path: filepath.Join(os.Getenv("GD_SYNC_HOME"), "config.toml"), GitPrivate: "true", DefaultType: "wordpress"}
+	for k, v := range map[string]string{"projects_dir": projects, "ssh_host": w.srv.Host, "ssh_user": "test", "ssh_port": w.srv.Port} {
+		if err := g.Set(k, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := g.Save(); err != nil {
+		t.Fatal(err)
+	}
+	w.write(w.server, "wp-content/themes/t/style.css", "x")
+
+	// domain, then enter for name, folder, repo, type, host, user, port;
+	// the web root; enter for the maintained paths.
+	ui.SetInput(strings.NewReader("acme.example\n\n\n\n\n\n\n\n" + w.server + "\n\n"))
+	t.Cleanup(func() { ui.SetInput(os.Stdin) })
+	if err := run([]string{"new"}); err != nil {
+		t.Fatal(err)
+	}
+	s, err := site.Load(filepath.Join(projects, "acme.example"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.SSHHost != w.srv.Host || s.SSHUser != "test" || s.SSHPort != w.srv.Port || s.RemoteRoot != w.server {
+		t.Errorf("site: %+v", s)
+	}
+	if got := w.read(s.Repo, "wp-content/themes/t/style.css"); got != "x" {
+		t.Errorf("the live site should be copied in, got %q", got)
 	}
 }

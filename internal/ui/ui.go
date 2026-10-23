@@ -5,6 +5,7 @@ package ui
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -44,6 +45,9 @@ func List(colour, marker string, lines []string) {
 }
 
 var stdin = bufio.NewReader(os.Stdin)
+
+// SetInput makes Ask read its answers from r. For tests.
+func SetInput(r io.Reader) { stdin = bufio.NewReader(r) }
 
 func readLine() (string, bool) {
 	s, err := stdin.ReadString('\n')

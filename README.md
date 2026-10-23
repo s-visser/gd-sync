@@ -63,9 +63,11 @@ gd-sync config --setup                # walk through them again
 | `git_owner` | GitHub user or org for new repos |
 | `git_private` | `true` / `false` for new repos |
 | `default_type` | `wordpress` or `astro` |
+| `ssh_host`, `ssh_user`, `ssh_port` | the server new sites are on, when your sites share one |
 
-Stored in `~/.config/gd-sync/config.toml` (`%AppData%\gd-sync\config.toml` on Windows). With these set, `gd-sync new` already knows the
-folder and the GitHub repo name, so you just press enter.
+Stored in `~/.config/gd-sync/config.toml` (`%AppData%\gd-sync\config.toml` on Windows). With these set, `gd-sync new` only needs the
+domain: the folder, the GitHub repo, the server and the web root all default
+from it, so you press enter for the rest.
 
 ---
 

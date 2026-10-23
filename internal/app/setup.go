@@ -43,6 +43,17 @@ func cmdConfig(g *config.Global, args []string) error {
 			ui.Warn("%v", err)
 		}
 		g.Set("default_type", ui.Ask("Default site type (wordpress/astro):", g.DefaultType))
+		ui.Info("If your sites share a server, its SSH details save typing them for every site.")
+		ui.Info("SSH: GoDaddy dashboard -> your hosting -> Settings -> SSH access -> Manage")
+		g.Set("ssh_host", ui.Ask("SSH host (IP or server name, empty for none):", g.SSHHost))
+		g.Set("ssh_user", ui.Ask("SSH username (cPanel username):", g.SSHUser))
+		for {
+			err := g.Set("ssh_port", ui.Ask("SSH port:", g.SSHPort))
+			if err == nil {
+				break
+			}
+			ui.Warn("%v", err)
+		}
 		if err := g.Save(); err != nil {
 			return err
 		}
@@ -102,7 +113,7 @@ func cmdScaffold(c *ctx) error {
 
 // cmdAdopt registers a folder that already has a .gd-sync.toml: a clone on a new
 // machine, or a site set up by a colleague.
-func cmdAdopt(dir string) error {
+func cmdAdopt(g *config.Global, dir string) error {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return err
@@ -122,9 +133,9 @@ func cmdAdopt(dir string) error {
 	if s.SSHHost == "" || s.SSHUser == "" {
 		ui.Step("%s has no connection details on this machine", s.Name)
 		ui.Info("SSH: GoDaddy dashboard -> your hosting -> Settings -> SSH access -> Manage")
-		s.SSHHost = ui.Ask("SSH host:", s.SSHHost)
-		s.SSHUser = ui.Ask("SSH username:", s.SSHUser)
-		s.SSHPort = ui.Ask("SSH port:", s.SSHPort)
+		s.SSHHost = ui.Ask("SSH host:", or(s.SSHHost, g.SSHHost))
+		s.SSHUser = ui.Ask("SSH username:", or(s.SSHUser, g.SSHUser))
+		s.SSHPort = ui.Ask("SSH port:", g.SSHPort)
 		if err := s.Write(); err != nil {
 			return err
 		}
@@ -175,11 +186,14 @@ func cmdNew(g *config.Global) error {
 	}
 
 	fmt.Fprintln(os.Stderr)
-	ui.Info("SSH: GoDaddy dashboard -> your hosting -> Settings -> SSH access -> Manage")
+	if g.SSHHost == "" {
+		ui.Info("SSH: GoDaddy dashboard -> your hosting -> Settings -> SSH access -> Manage")
+		ui.Info("Same server for all your sites? Save it once with: gd-sync config --setup")
+	}
 	s := &site.Site{Repo: dir, Name: name, Type: stype, LiveURL: "https://" + domain}
-	s.SSHHost = ui.Ask("SSH host (IP or server name):", "")
-	s.SSHUser = ui.Ask("SSH username (cPanel username):", "")
-	s.SSHPort = ui.Ask("SSH port:", "22")
+	s.SSHHost = ui.Ask("SSH host (IP or server name):", g.SSHHost)
+	s.SSHUser = ui.Ask("SSH username (cPanel username):", g.SSHUser)
+	s.SSHPort = ui.Ask("SSH port:", g.SSHPort)
 	s.RemoteRoot = strings.TrimSuffix(ui.Ask("Remote web root:", "/home/"+s.SSHUser+"/public_html/"+domain), "/")
 	if stype == "wordpress" {
 		fmt.Fprintln(os.Stderr)
@@ -254,7 +268,7 @@ func cmdNew(g *config.Global) error {
 		}
 	}
 
-	if ui.Confirm("Install an SSH key so you stop typing the password?") {
+	if conn.Typed && ui.Confirm("Install an SSH key so you stop typing the password?") {
 		if err := cmdKey(c); err != nil {
 			ui.Fail(err)
 		}
@@ -355,4 +369,12 @@ func emptyOrMissing(dir string) error {
 func fileExists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
+}
+
+// or is a, or b when a is empty.
+func or(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

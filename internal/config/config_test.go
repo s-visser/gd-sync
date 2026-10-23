@@ -54,3 +54,27 @@ func TestRegistryKeepsSites(t *testing.T) {
 		t.Errorf("RegistryList = %v", got)
 	}
 }
+
+// The server defaults survive a save and load; the port must be a port.
+func TestGlobalSSHDefaults(t *testing.T) {
+	t.Setenv("GD_SYNC_CONFIG", filepath.Join(t.TempDir(), "config.toml"))
+	g, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.SSHPort != "22" || g.SSHHost != "" {
+		t.Errorf("defaults: %+v", g)
+	}
+	if err := g.Set("ssh_port", "port"); err == nil {
+		t.Error("ssh_port should be a number")
+	}
+	g.Set("ssh_host", "1.2.3.4")
+	g.Set("ssh_user", "acme")
+	g.Set("ssh_port", "2222")
+	if err := g.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if g, err = Load(); err != nil || g.SSHHost != "1.2.3.4" || g.SSHUser != "acme" || g.SSHPort != "2222" {
+		t.Errorf("reloaded: %+v, %v", g, err)
+	}
+}

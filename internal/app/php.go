@@ -31,16 +31,27 @@ const defaultPHP = "8.3"
 // it elsewhere.
 var cpanelUserdata = "/var/cpanel/userdata"
 
-// phpProbe prints "source<TAB>version" for the first place on the server
-// that says which PHP serves the web root ($1): a handler in .htaccess
-// (nearest folder first, as Apache reads them), the domain's cPanel
-// setting, the CloudLinux PHP Selector, and last the command-line PHP.
+// phpProbe prints "source<TAB>version<TAB>full version" for the first place
+// on the server that says which PHP serves the web root ($1): a handler in
+// .htaccess (nearest folder first, as Apache reads them), the domain's
+// cPanel setting, the CloudLinux PHP Selector, and last the command-line
+// PHP. The full version, e.g. 8.5.12, comes from asking that PHP itself,
+// and is left empty when its binary isn't where cPanel and CloudLinux put it.
 const phpProbe = `root=$1; userdata=$2/$(id -un)
+found() {
+  n=$(printf %s "$2" | tr -d .)
+  full=
+  for php in /opt/cpanel/ea-php$n/root/usr/bin/php /opt/alt/php$n/usr/bin/php; do
+    [ -x "$php" ] && full=$("$php" -n -r 'echo PHP_VERSION;' 2>/dev/null) && break
+  done
+  printf '%s\t%s\t%s\n' "$1" "$2" "$full"
+  exit
+}
 d=$root
 while :; do
   if [ -f "$d/.htaccess" ]; then
     v=$(grep -v '^[[:space:]]*#' "$d/.htaccess" | grep -oiE 'x-httpd-(ea-|alt-)?php[0-9]+|lsphp[0-9]+' | head -1 | grep -oE '[0-9]+$')
-    [ -n "$v" ] && { printf 'handler in %s\t%s\n' "$d/.htaccess" "$v"; exit; }
+    [ -n "$v" ] && found "handler in $d/.htaccess" "$v"
   fi
   [ "$d" = "$HOME" ] || [ "$d" = / ] || [ -z "$d" ] && break
   d=$(dirname "$d")
@@ -49,51 +60,68 @@ for f in "$userdata"/*; do
   case "$f" in *.cache|*_SSL|*/main|*/cache) continue ;; esac
   grep -qx "documentroot: $root" "$f" 2>/dev/null || continue
   v=$(sed -n 's/^phpversion:[[:space:]]*[a-z-]*php\([0-9][0-9]*\).*/\1/p' "$f" | head -1)
-  [ -n "$v" ] && { printf 'cPanel setting for the domain\t%s\n' "$v"; exit; }
+  [ -n "$v" ] && found 'cPanel setting for the domain' "$v"
 done
 v=$(selectorctl --user-current 2>/dev/null | awk 'NR==1{print $1}')
-case "$v" in [0-9]*.[0-9]*) printf 'CloudLinux PHP Selector\t%s\n' "$v"; exit ;; esac
-v=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;' 2>/dev/null)
-[ -n "$v" ] && printf 'command-line PHP (may differ from the website)\t%s\n' "$v"
+case "$v" in [0-9]*.[0-9]*) found 'CloudLinux PHP Selector' "$v" ;; esac
+v=$(php -r 'echo PHP_VERSION;' 2>/dev/null)
+[ -n "$v" ] && printf 'command-line PHP (may differ from the website)\t%s\t%s\n' "${v%.*}" "$v"
 exit 0
 `
 
-var poweredBy = regexp.MustCompile(`PHP/(\d+)\.(\d+)`)
+var poweredBy = regexp.MustCompile(`PHP/(\d+\.\d+)((?:\.\d+)?)`)
 
-// livePHP finds the PHP version the live site runs, and says where from.
-// The site's own X-Powered-By header wins: it is what visitors get. When
-// the server says something else, both are shown.
-func (c *ctx) livePHP(conn *remote.Conn) (version, source string) {
+// livePHP finds the PHP version the live site runs, e.g. "8.5", and says
+// where from. full is the exact release, e.g. "8.5.12", or the same as
+// version when that can't be found out. The site's own X-Powered-By header
+// wins: it is what visitors get. When the server says something else, both
+// are shown.
+func (c *ctx) livePHP(conn *remote.Conn) (version, full, source string) {
 	out, err := conn.Output("sh -s -- "+remote.QuoteAll([]string{c.s.RemoteRoot, cpanelUserdata}), strings.NewReader(phpProbe))
 	if err == nil {
-		if src, v, ok := strings.Cut(strings.TrimSpace(string(out)), "\t"); ok {
-			version, source = phpDotted(v), src
+		if f := strings.Split(strings.TrimRight(string(out), "\r\n"), "\t"); len(f) >= 2 {
+			source, version = f[0], phpDotted(f[1])
+			if len(f) > 2 && strings.HasPrefix(f[2], version+".") {
+				full = f[2]
+			}
 		}
 	}
-	if v := headerPHP(c.s.LiveURL); v != "" {
+	if v, f := headerPHP(c.s.LiveURL); v != "" {
 		if version != "" && version != v {
 			ui.Warn("The server's %s says PHP %s, but %s answers with PHP %s — going by the site", source, version, c.s.LiveURL, v)
 		}
-		return v, "the live site's X-Powered-By header"
+		if f == "" && v == version {
+			f = full
+		}
+		version, full, source = v, f, "the live site's X-Powered-By header"
 	}
-	return version, source
+	if full == "" {
+		full = version
+	}
+	return version, full, source
 }
 
-// headerPHP reads the PHP version from a site's X-Powered-By header, or "".
-func headerPHP(url string) string {
+// headerPHP reads the PHP version from a site's X-Powered-By header: "8.5",
+// and the exact release when the header has it, "8.5.12". Empty when the
+// site doesn't say.
+func headerPHP(url string) (version, full string) {
 	if url == "" {
-		return ""
+		return "", ""
 	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	resp.Body.Close()
-	if m := poweredBy.FindStringSubmatch(resp.Header.Get("X-Powered-By")); m != nil {
-		return m[1] + "." + m[2]
+	m := poweredBy.FindStringSubmatch(resp.Header.Get("X-Powered-By"))
+	if m == nil {
+		return "", ""
 	}
-	return ""
+	if m[2] == "" {
+		return m[1], ""
+	}
+	return m[1], m[1] + m[2]
 }
 
 // phpDotted turns cPanel's "81" or "56" into "8.1" or "5.6"; "8.5" stays.
@@ -144,14 +172,18 @@ func phpOlder(a, b string) bool {
 // checkPHP compares the live PHP with the site's PHP_VERSION. With update,
 // it rewrites .gd-sync.toml and the devcontainer's .env to match.
 func (c *ctx) checkPHP(conn *remote.Conn, update bool) (changed bool, err error) {
-	live, source := c.livePHP(conn)
+	live, full, source := c.livePHP(conn)
 	if live == "" {
 		phpForImage("")
 		return false, nil
 	}
 	want := phpForImage(live)
+	match := fmt.Sprintf("PHP %s, the same as live (%s)", full, source)
+	if want != live {
+		match = fmt.Sprintf("PHP %s, the closest there is to live's %s (%s)", want, full, source)
+	}
 	if want == c.s.PHPVersion {
-		ui.OK("PHP %s, the same as live (%s)", want, source)
+		ui.OK("%s", match)
 		return false, nil
 	}
 	if !update {
@@ -159,7 +191,7 @@ func (c *ctx) checkPHP(conn *remote.Conn, update bool) (changed bool, err error)
 		if local == "" {
 			local = defaultPHP
 		}
-		ui.Warn("The live site runs PHP %s (%s), the local site PHP %s.", live, source, local)
+		ui.Warn("The live site runs PHP %s (%s), the local site PHP %s.", full, source, local)
 		ui.Info("Match it with: gd-sync php")
 		return false, nil
 	}
@@ -170,7 +202,7 @@ func (c *ctx) checkPHP(conn *remote.Conn, update bool) (changed bool, err error)
 	if err := scaffold.Devcontainer(c.s); err != nil {
 		return false, err
 	}
-	ui.OK("PHP %s, the same as live (%s) — written to %s", want, source, site.File)
+	ui.OK("%s — written to %s", match, site.File)
 	return true, nil
 }
 
