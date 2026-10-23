@@ -124,7 +124,7 @@ func TestGitignoreKeepsOnlyMaintainedPaths(t *testing.T) {
 		{
 			tracked:    []string{"wp-content/plugins/acme custom", "wp-content/themes/acme", "robots.txt", "wp-content/themes/acme/inc"},
 			maintained: []string{"wp-content/plugins/acme custom/x.php", "wp-content/themes/acme/style.css", "wp-content/themes/acme/inc/a.php", "robots.txt"},
-			ignoredToo: []string{"wp-content/themes/acme/node_modules/m.js", "wp-content/plugins/acme custom/debug.log"},
+			ignoredToo: []string{"wp-content/themes/acme/node_modules/m.js", "wp-content/plugins/acme custom/debug.log", "wp-content/themes/acme/a.pot:Zone.Identifier"},
 		},
 		{tracked: nil},
 	} {

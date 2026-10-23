@@ -20,6 +20,7 @@ var DefaultExcludes = []string{
 	".git", ".github", ".devcontainer", ".gd-sync.toml", ".gd-sync.local.toml", ".gitignore", ".gitattributes",
 	".idea", ".vscode", ".run", ".DS_Store", "node_modules", "_db", "*.log", ".env",
 	"wp-content/cache", "wp-content/uploads",
+	"*:Zone.Identifier", // Windows download metadata, copied over as a file; not a valid name on Windows
 }
 
 // MirrorExcludes are never copied into the local mirror of the whole site:
@@ -28,7 +29,7 @@ var DefaultExcludes = []string{
 var MirrorExcludes = []string{
 	"/.github", "/.devcontainer", "/.gd-sync.toml", "/.gd-sync.local.toml", "/.gitignore", "/.gitattributes",
 	"/.idea", "/.vscode", "/.run", "/_db", "/README.md", "/GD-SYNC.md",
-	".git", ".DS_Store", "*.log", "error_log", "wp-content/cache",
+	".git", ".DS_Store", "*.log", "error_log", "wp-content/cache", "*:Zone.Identifier",
 }
 
 // Matcher decides which paths belong to a transfer: those under one of the

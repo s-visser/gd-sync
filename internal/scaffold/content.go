@@ -37,6 +37,7 @@ wp-content/upgrade/
 wp-content/backup*/
 wp-content/*.log
 error_log
+*:Zone.Identifier
 .idea/
 .vscode/
 .DS_Store
