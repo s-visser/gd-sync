@@ -193,7 +193,7 @@ The folder is the live web root, plus gd-sync's own files:
 | | in git? |
 |---|---|
 | the paths you maintain (`tracked`) | yes — on `main` as the server has them, on `develop` as you change them |
-| `.gd-sync.toml`, `.gitignore`, `.devcontainer/`, `.github/`, `.run/`, `README.md`, `GD-SYNC.md` | yes |
+| `.gd-sync.toml`, `.gitignore`, `.devcontainer/`, `.github/`, `.run/`, `README.md`, `GD-SYNC.md`, `AGENTS.md` | yes |
 | everything else: WordPress core, other plugins and themes, uploads, `wp-config.php` | no — the local copy |
 
 `.gitignore` is generated from `tracked`: it ignores everything, then lets back
@@ -408,6 +408,14 @@ Put gd-sync's `-y` before `wp` (or immediately after it); once the WP-CLI comman
 starts, its arguments, including `--yes`, are passed through unchanged.
 Target overrides such as `--path`, `--ssh` and `@aliases` are refused so the
 backup belongs to the site you selected.
+
+Every managed WordPress project gets an `AGENTS.md` instructing coding agents to make
+schema and data changes through committed migrations, test them locally, and
+let deployment apply them to live. Run `gd-sync scaffold` in existing projects
+to add or refresh these instructions. gd-sync updates its marked section while
+preserving project-specific instructions elsewhere in the file. `AGENTS.md`
+stays in Git and is excluded from server transfers. Astro projects do not get
+these migration instructions; their existing `AGENTS.md` files are left untouched.
 
 For changes that should travel with code, use revision migrations:
 

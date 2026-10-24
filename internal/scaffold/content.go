@@ -18,8 +18,38 @@ _db/
 // you maintain: gd-sync's own files. Everything else in the folder is the
 // local mirror of the live site.
 var gitignoreScaffold = []string{
-	".gitignore", ".gitattributes", ".gd-sync.toml", ".devcontainer/", ".github/", ".run/", "GD-SYNC.md", "README.md", "_migrations/",
+	".gitignore", ".gitattributes", ".gd-sync.toml", ".devcontainer/", ".github/", ".run/", "GD-SYNC.md", "AGENTS.md", "README.md", "_migrations/",
 }
+
+const agentsStart = "<!-- gd-sync:database-migrations:start -->"
+const agentsEnd = "<!-- gd-sync:database-migrations:end -->"
+
+const agentsDatabase = agentsStart + `
+## Database changes in this gd-sync project
+
+Always create committed database migrations for any database work that changes
+schema or data, including content, options, settings, backfills and data fixes.
+Do not apply these changes directly through SQL, WP-CLI, database consoles,
+admin interfaces or ad hoc scripts, even against the local database. Read-only
+queries and inspection are allowed. Pulling the live database with gd-sync db
+is the supported way to refresh the local copy.
+
+1. Run gd-sync migrate new "Describe the change" to create a PHP migration in
+   _migrations/. Keep its explicit $revision and $down_revision metadata so it
+   follows the existing migration history.
+2. Put the change in the $upgrade closure and its reversal in $downgrade.
+   Use WordPress APIs or gd_sync_query() inside the migration. Check return
+   values and throw on failure. Make migrations safe to retry: MySQL schema
+   changes can commit implicitly and cannot always be rolled back.
+3. Test with gd-sync migrate against the local devcontainer database. Rehearse
+   gd-sync migrate downgrade -1 and gd-sync migrate upgrade when applicable.
+4. Commit the migration with the code that needs it. Keep already applied
+   revisions and their parent metadata unchanged. The normal gd-sync merge
+   and deploy workflow applies pending migrations from committed main to the
+   live database after backing it up. Do not bypass it with direct live writes.
+
+See GD-SYNC.md for this project's development and deployment workflow.
+` + agentsEnd
 
 // gitignoreNever stays out of git even inside a path you maintain.
 const gitignoreNever = `# Never committed, even inside a maintained path.
@@ -96,6 +126,7 @@ const cheatSheet = "# Working on this site\n\n" +
 	"| `.gitignore` | generated from `TRACKED` — run `gd-sync scaffold` after changing it |\n" +
 	"| `.gd-sync.local.toml` | your SSH details — not committed |\n" +
 	"| `_db/` | database dumps — not committed |\n" +
+	"| `AGENTS.md` | agent instructions: make database changes through committed migrations |\n" +
 	"| `_migrations/` | committed PHP migrations with revision/down_revision and upgrade/downgrade closures |\n" +
 	"| `.devcontainer/` | the local Docker environment, with a local `wp-config.php` and `.htaccess` |\n" +
 	"| `.github/workflows/` | the sync and deploy workers |\n\n" +

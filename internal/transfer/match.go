@@ -17,6 +17,7 @@ import (
 
 // DefaultExcludes are never synced or deployed, whatever the site says.
 var DefaultExcludes = []string{
+	"/AGENTS.md",
 	".git", ".github", ".devcontainer", ".gd-sync.toml", ".gd-sync.local.toml", ".gitignore", ".gitattributes",
 	".idea", ".vscode", ".run", ".DS_Store", "node_modules", "_db", "_migrations", "*.log", ".env",
 	"wp-content/cache", "wp-content/uploads",
@@ -28,7 +29,7 @@ var DefaultExcludes = []string{
 // Uploads are mirrored, so the local site has its images.
 var MirrorExcludes = []string{
 	"/.github", "/.devcontainer", "/.gd-sync.toml", "/.gd-sync.local.toml", "/.gitignore", "/.gitattributes",
-	"/.idea", "/.vscode", "/.run", "/_db", "/_migrations", "/README.md", "/GD-SYNC.md",
+	"/.idea", "/.vscode", "/.run", "/_db", "/_migrations", "/README.md", "/GD-SYNC.md", "/AGENTS.md",
 	".git", ".DS_Store", "*.log", "error_log", "wp-content/cache", "*:Zone.Identifier",
 }
 

@@ -131,7 +131,7 @@ func TestGitignoreKeepsOnlyMaintainedPaths(t *testing.T) {
 	}
 	scaffolding := []string{
 		".gitignore", ".gitattributes", ".gd-sync.toml", ".devcontainer/docker-compose.yml",
-		".github/workflows/deploy.yml", ".run/x.run.xml", "GD-SYNC.md", "README.md",
+		".github/workflows/deploy.yml", ".run/x.run.xml", "GD-SYNC.md", "AGENTS.md", "README.md",
 	}
 	mirror := []string{
 		"index.php", "wp-config.php", ".htaccess", "wp-includes/version.php", "wp-admin/a.php",
@@ -264,5 +264,77 @@ func TestMigrationsStayInGit(t *testing.T) {
 	}
 	if g.OK("check-ignore", "-q", "_migrations/example.php") {
 		t.Fatal("scaffold ignores migrations")
+	}
+}
+
+func TestDocsMaintainAgentInstructions(t *testing.T) {
+	for _, kind := range []string{"wordpress", "astro"} {
+		t.Run(kind, func(t *testing.T) {
+			s := &site.Site{Repo: t.TempDir(), Type: kind}
+			if err := Docs(s); err != nil {
+				t.Fatal(err)
+			}
+			file := filepath.Join(s.Repo, "AGENTS.md")
+			src, err := os.ReadFile(file)
+			if kind == "astro" {
+				if !os.IsNotExist(err) {
+					t.Fatalf("Astro should not get migration instructions: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"Always create committed database migrations", "gd-sync migrate new", "$down_revision", "gd-sync migrate", "live database", "Do not apply these changes directly"} {
+				if kind == "wordpress" && !strings.Contains(string(src), want) {
+					t.Errorf("AGENTS.md lacks %q", want)
+				}
+			}
+			// Refresh the managed block without changing rules on either side.
+			custom := "# Project instructions\n\nUse the project's coding style.\n\n" + agentsStart + "\nOutdated instructions.\n" + agentsEnd + "\n\nKeep this footer.\n"
+			if err := os.WriteFile(file, []byte(custom), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Docs(s); err != nil {
+				t.Fatal(err)
+			}
+			updated, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := custom
+			if kind == "wordpress" {
+				want = strings.Replace(custom, agentsStart+"\nOutdated instructions.\n"+agentsEnd, agentsDatabase, 1)
+			}
+			if string(updated) != want {
+				t.Fatalf("custom instructions changed: %s", updated)
+			}
+			if err := Docs(s); err != nil {
+				t.Fatal(err)
+			}
+			again, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(again) != string(updated) {
+				t.Fatal("repeated scaffold changed AGENTS.md")
+			}
+			// Existing unmarked instructions are retained when adopting a project.
+			if err := os.WriteFile(file, []byte("Existing project rules.\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := Docs(s); err != nil {
+				t.Fatal(err)
+			}
+			appended, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == "astro" {
+				if string(appended) != "Existing project rules.\n" {
+					t.Fatal("Astro instructions changed")
+				}
+			} else if !strings.HasPrefix(string(appended), "Existing project rules.\n\n"+agentsStart) {
+				t.Fatal("existing instructions overwritten")
+			}
+		})
 	}
 }

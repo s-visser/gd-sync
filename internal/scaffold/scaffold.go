@@ -165,10 +165,13 @@ func attrPattern(p string) string {
 	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(pat) + `"`
 }
 
-// Docs writes GD-SYNC.md, the tool's own cheat sheet, and the site's README
-// if it doesn't have one yet.
+// Docs refreshes gd-sync's documentation and agent instructions, and writes
+// the site's README if it doesn't have one yet.
 func Docs(s *site.Site) error {
 	if err := write(s, "GD-SYNC.md", cheatSheet); err != nil {
+		return err
+	}
+	if err := agents(s); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(s.Repo, "README.md")); err == nil {
@@ -185,6 +188,31 @@ func Docs(s *site.Site) error {
 		login = fmt.Sprintf("| Local admin | %s/wp-admin — `dev` / `dev` |\n", strings.TrimSuffix(s.LocalURL, "/"))
 	}
 	return write(s, "README.md", fmt.Sprintf(readme, domain, s.LiveURL, s.LocalURL, login, kind))
+}
+
+// agents maintains only its marked block, preserving project-specific rules.
+func agents(s *site.Site) error {
+	if s.Type != "wordpress" {
+		return nil
+	}
+	src, err := os.ReadFile(filepath.Join(s.Repo, "AGENTS.md"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	text := string(src)
+	start, end := strings.Index(text, agentsStart), strings.Index(text, agentsEnd)
+	switch {
+	case start == -1 && end == -1:
+		if text != "" {
+			text = strings.TrimRight(text, "\r\n") + "\n\n"
+		}
+		text += agentsDatabase + "\n"
+	case start >= 0 && end > start && strings.Count(text, agentsStart) == 1 && strings.Count(text, agentsEnd) == 1:
+		text = text[:start] + agentsDatabase + text[end+len(agentsEnd):]
+	default:
+		return fmt.Errorf("AGENTS.md has malformed gd-sync markers; repair its database-migrations block and run gd-sync scaffold again")
+	}
+	return write(s, "AGENTS.md", text)
 }
 
 // Devcontainer copies the template for the site's type and fills in the
