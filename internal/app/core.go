@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -70,11 +71,64 @@ func (c *ctx) syncMain(conn *remote.Conn) error {
 	if err != nil {
 		return err
 	}
+	base, err := c.syncBase(conn)
+	if err != nil {
+		return err
+	}
+	m := c.matcher(c.s.Tracked)
+	baseTree, err := transfer.TreeAt(c.git, base, m)
+	if err != nil {
+		return err
+	}
+	// Anything main changed since base never reached the server. Copying the
+	// server over main would undo it, so it has to be merged instead.
+	unsent := !c.git.OK("diff", "--quiet", base, "main", "--")
 
 	if err := c.ensureLFS(); err != nil {
 		return err
 	}
-	held, err := c.vetNew(cmp)
+	if unsent {
+		err = c.mergeServer(cmp, base, baseTree)
+	} else {
+		err = c.commitServer(cmp)
+	}
+	if err != nil {
+		return err
+	}
+
+	tree, err := transfer.MainTree(c.git, m)
+	if err != nil {
+		return err
+	}
+	if err := cmp.Matching(tree).Save(statePath); err != nil {
+		return err
+	}
+	if left := cmp.Unsent(baseTree, tree); unsent && len(left) > 0 {
+		ui.Info("%d file(s) on main aren't live yet — the next deploy ships them:", len(left))
+		ui.List(ui.G, "  ", left)
+	}
+
+	if c.git.HasRemote() {
+		if c.git.Quiet("push", "-q", "origin", "main") == nil {
+			ui.Info("pushed main to origin")
+		} else {
+			ui.Warn("could not push main to origin")
+		}
+	}
+	if back != "" && !c.keepBranch {
+		if err := c.git.Quiet("checkout", "-q", back); err != nil {
+			return err
+		}
+		c.restoreStash()
+	}
+	return nil
+}
+
+// commitServer copies the server's maintained paths over main and commits
+// them as a [server-sync] snapshot. That is only right while main holds
+// nothing the server lacks; see mergeServer for when it does.
+func (c *ctx) commitServer(cmp *transfer.Comparison) error {
+	held, err := c.vetNew(cmp, cmp.New)
 	if err != nil {
 		return err
 	}
@@ -100,58 +154,224 @@ func (c *ctx) syncMain(conn *remote.Conn) error {
 	if n := len(cmp.Skipped); n > 0 {
 		ui.Warn("%d file(s) vanished from the server mid-sync — run sync again", n)
 	}
-
-	if c.git.Status(site.File, ".gitignore", ".gitattributes") != "" {
-		if err := c.git.Quiet("add", "--", site.File, ".gitignore", ".gitattributes"); err != nil {
-			return err
-		}
+	if err := c.stageKeptOut(); err != nil {
+		return err
 	}
 
 	if c.git.OK("diff", "--cached", "--quiet") {
 		ui.OK("main already matches the server")
-	} else {
-		if err := c.git.Commit("[server-sync] Live server state " + stamp("2006-01-02 15:04")); err != nil {
-			return err
-		}
-		ui.OK("main updated from the server")
-		if st, err := c.git.Output("diff", "--stat", "HEAD~1", "HEAD"); err == nil {
-			ui.List("", "", strings.Split(strings.TrimRight(st, "\n"), "\n"))
-		}
+		return nil
 	}
-
-	tree, err := transfer.MainTree(c.git, c.matcher(c.s.Tracked))
-	if err != nil {
+	if err := c.git.Commit(snapshotMsg()); err != nil {
 		return err
 	}
-	if err := transfer.Settle(cmp.Server, tree, cmp.Skipped).Save(statePath); err != nil {
-		return err
-	}
-
-	if c.git.HasRemote() {
-		if c.git.Quiet("push", "-q", "origin", "main") == nil {
-			ui.Info("pushed main to origin")
-		} else {
-			ui.Warn("could not push main to origin")
-		}
-	}
-	if back != "" && !c.keepBranch {
-		if err := c.git.Quiet("checkout", "-q", back); err != nil {
-			return err
-		}
-		c.restoreStash()
-	}
+	ui.OK("main updated from the server")
+	c.showStat("HEAD~1", "HEAD")
 	return nil
 }
 
-// vetNew checks the files the server has that main doesn't yet, before any
-// of them go in.
-func (c *ctx) vetNew(cmp *transfer.Comparison) (map[string]bool, error) {
-	if len(cmp.New) == 0 {
+// mergeServer brings the server's changes into a main that holds work the
+// server doesn't have yet — an unpushed merge, say, or a deploy that failed.
+// The server's state goes in as a [server-sync] snapshot on top of base, the
+// last commit known to match the server, and main merges that snapshot. So
+// main's own work stays, a file both sides changed is a normal git conflict,
+// and the commit on top of main is a merge, not a snapshot: pushing it
+// deploys main's work instead of skipping it.
+func (c *ctx) mergeServer(cmp *transfer.Comparison, base string, baseTree transfer.Tree) error {
+	ui.Info("main has changes the server doesn't have yet (since %s), so the server's changes are merged in", short(c.git, base))
+	put, del := cmp.Since(baseTree, c.keptOut)
+	var fresh []string
+	for p := range put {
+		if _, ok := cmp.Main[p]; !ok {
+			fresh = append(fresh, p)
+		}
+	}
+	sort.Strings(fresh)
+	held, err := c.vetNew(cmp, fresh)
+	if err != nil {
+		return err
+	}
+	for p := range held {
+		delete(put, p)
+	}
+	if n := len(cmp.Skipped); n > 0 {
+		ui.Warn("%d file(s) vanished from the server mid-sync — run sync again", n)
+	}
+
+	if len(put)+len(del) == 0 {
+		ui.OK("the server hasn't changed since then")
+		if err := c.stageKeptOut(); err != nil {
+			return err
+		}
+		if c.git.OK("diff", "--cached", "--quiet") {
+			return nil
+		}
+		return c.git.Commit("Record what git keeps out")
+	}
+
+	snap, err := c.snapshot(base, baseTree, put, del, cmp)
+	if err != nil {
+		return err
+	}
+	const msg = "Merge the live server's changes into main"
+	if err := c.git.Quiet("merge", "--no-ff", "--no-commit", "-m", msg, snap); err != nil {
+		out, _ := c.git.Output("diff", "--name-only", "-z", "--diff-filter=U")
+		conflicts := strings.FieldsFunc(out, func(r rune) bool { return r == 0 })
+		if len(conflicts) == 0 {
+			return err
+		}
+		_ = c.stageKeptOut()
+		ui.Warn("main and the live server both changed these, and main's version was never deployed:")
+		ui.List("", "", conflicts)
+		return errors.New("Resolve them in your IDE, then: git merge --continue — and run gd-sync again")
+	}
+	if err := c.stageKeptOut(); err != nil {
+		return err
+	}
+	if err := c.git.Commit(msg); err != nil {
+		return err
+	}
+	ui.OK("main updated from the server")
+	c.showStat(base, snap)
+	return nil
+}
+
+// snapshot commits the server's state as a [server-sync] commit on top of
+// base: base's tree with the server's changes since then. It works in a
+// scratch index, leaving the work tree and every branch alone.
+func (c *ctx) snapshot(base string, baseTree transfer.Tree, put map[string]string, del []string, cmp *transfer.Comparison) (string, error) {
+	wd, err := c.workDir()
+	if err != nil {
+		return "", err
+	}
+	g := c.git.With("GIT_INDEX_FILE=" + filepath.Join(wd, "index"))
+	if err := g.Quiet("read-tree", base); err != nil {
+		return "", err
+	}
+	paths := make([]string, 0, len(put))
+	for p := range put {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+
+	// Store the fetched files in git. A path without one holds main's copy on
+	// the server, and git has that already.
+	var raw []string
+	for _, p := range paths {
+		f, ok := cmp.Fetched[p]
+		switch {
+		case !ok:
+		case c.isLFS(p):
+			// Through the LFS filter, so the file itself is stored as well.
+			id, err := g.Output("hash-object", "-w", "--path="+p, f.File)
+			if err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(id) != put[p] {
+				return "", fmt.Errorf("git stored %s differently than it was compared", p)
+			}
+		default:
+			raw = append(raw, p)
+		}
+	}
+	if len(raw) > 0 {
+		var files strings.Builder
+		for _, p := range raw {
+			files.WriteString(cmp.Fetched[p].File + "\n")
+		}
+		out, err := g.Input(strings.NewReader(files.String()), "hash-object", "-w", "--no-filters", "--stdin-paths")
+		if err != nil {
+			return "", err
+		}
+		ids := strings.Fields(out)
+		for i, p := range raw {
+			if i >= len(ids) || ids[i] != put[p] {
+				return "", fmt.Errorf("git stored %s differently than it was compared", p)
+			}
+		}
+	}
+
+	var entries bytes.Buffer
+	for _, p := range paths {
+		mode := baseTree[p].Mode
+		if mode == "" {
+			mode = cmp.Main[p].Mode
+		}
+		if mode == "" {
+			mode = "100644"
+		}
+		fmt.Fprintf(&entries, "%s %s\t%s\x00", mode, put[p], p)
+	}
+	if _, err := g.Input(&entries, "update-index", "-z", "--index-info"); err != nil {
+		return "", err
+	}
+	if len(del) > 0 {
+		if _, err := g.Input(gitx.NUL(del), "update-index", "--force-remove", "-z", "--stdin"); err != nil {
+			return "", err
+		}
+	}
+	tree, err := g.Output("write-tree")
+	if err != nil {
+		return "", err
+	}
+	sha, err := g.Output(gitx.AsGDSync("commit-tree", strings.TrimSpace(tree), "-p", base, "-m", snapshotMsg())...)
+	return strings.TrimSpace(sha), err
+}
+
+// snapshotTag starts the subject of every server snapshot. Only the start
+// counts: a commit that merely mentions one, such as git revert's
+// Revert "[server-sync] …", is ordinary work and must deploy.
+const snapshotTag = "[server-sync]"
+
+func isSnapshot(subject string) bool { return strings.HasPrefix(subject, snapshotTag) }
+
+func snapshotMsg() string { return snapshotTag + " Live server state " + stamp("2006-01-02 15:04") }
+
+// stageKeptOut stages what vetting recorded about what git keeps out.
+func (c *ctx) stageKeptOut() error {
+	if c.git.Status(site.File, ".gitignore", ".gitattributes") == "" {
+		return nil
+	}
+	return c.git.Quiet("add", "--", site.File, ".gitignore", ".gitattributes")
+}
+
+func (c *ctx) showStat(from, to string) {
+	if st, err := c.git.Output("diff", "--stat", from, to); err == nil && strings.TrimSpace(st) != "" {
+		ui.List("", "", strings.Split(strings.TrimRight(st, "\n"), "\n"))
+	}
+}
+
+func short(g gitx.Repo, rev string) string {
+	if s, err := g.Output("rev-parse", "--short", rev); err == nil {
+		return strings.TrimSpace(s)
+	}
+	return rev
+}
+
+// syncBase is the commit sync holds the server against: the last one known
+// to match it (see deployBase), or else main's first commit, which holds what
+// gd-sync new downloaded from the server.
+func (c *ctx) syncBase(conn *remote.Conn) (string, error) {
+	base, err := c.deployBase(conn)
+	if err != nil || base != "" {
+		return base, err
+	}
+	out, err := c.git.Output("rev-list", "--first-parent", "--max-parents=0", "main")
+	if f := strings.Fields(out); err == nil && len(f) > 0 {
+		return f[0], nil
+	}
+	return "", fmt.Errorf("Could not find main's first commit: %v", err)
+}
+
+// vetNew checks files the server has that main doesn't yet, before any of
+// them go in.
+func (c *ctx) vetNew(cmp *transfer.Comparison, paths []string) (map[string]bool, error) {
+	if len(paths) == 0 {
 		return map[string]bool{}, nil
 	}
 	var files []vet.File
 	isNew := map[string]bool{}
-	for _, p := range cmp.New {
+	for _, p := range paths {
 		files = append(files, vet.File{Path: p, Local: cmp.Fetched[p].File, Size: cmp.Server[p].Size})
 		isNew[p] = true
 	}
@@ -310,7 +530,7 @@ func cmdDeploy(c *ctx) error {
 	if err != nil {
 		return err
 	}
-	if strings.Contains(subject, "[server-sync]") {
+	if isSnapshot(subject) {
 		ui.Info("Server snapshot — nothing to deploy")
 		return nil
 	}
@@ -453,8 +673,9 @@ func (c *ctx) deployMain(conn *remote.Conn) error {
 }
 
 // deployBase is the most recent commit known to match the server: the last
-// deploy (recorded on the server itself) or the last [server-sync] snapshot,
-// whichever came later in main's history. With neither, it's an empty tree,
+// deploy (recorded on the server itself) or the newest [server-sync] snapshot
+// in main's history, whichever came later. A snapshot can be on main's own
+// line or merged in, as mergeServer does. With neither, it's an empty tree,
 // so every file in main counts as new and nothing is ever deleted.
 func (c *ctx) deployBase(conn *remote.Conn) (string, error) {
 	isCommit := func(ref string) bool { return ref != "" && c.git.OK("cat-file", "-e", ref+"^{commit}") }
@@ -465,9 +686,15 @@ func (c *ctx) deployBase(conn *remote.Conn) (string, error) {
 			deployed = sha
 		}
 	}
-	synced, _ := c.git.Output("log", "-1", "--first-parent", "--format=%H", "--fixed-strings", "--grep=[server-sync]", "main")
-	if synced = strings.TrimSpace(synced); !isCommit(synced) {
-		synced = ""
+	// --grep matches any line of the message, so it only narrows the search;
+	// the subject decides.
+	synced := ""
+	log, _ := c.git.Output("log", "--date-order", "--format=%H %s", `--grep=^\[server-sync\]`, "main")
+	for _, line := range strings.Split(log, "\n") {
+		if sha, subject, _ := strings.Cut(line, " "); isSnapshot(subject) && isCommit(sha) {
+			synced = sha
+			break
+		}
 	}
 
 	switch {

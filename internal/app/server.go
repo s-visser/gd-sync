@@ -45,7 +45,7 @@ func cmdDB(c *ctx) error {
 	if err != nil {
 		return err
 	}
-	err = conn.Run("cd "+remote.Quote(c.s.RemoteRoot)+" && ~/wp-cli.phar db export - --single-transaction --quick --default-character-set=utf8mb4 --skip-plugins --skip-themes", nil, f)
+	err = conn.Run("cd "+remote.Quote(c.s.RemoteRoot)+" && "+c.remoteWP()+" db export - --single-transaction --quick --default-character-set=utf8mb4 --skip-plugins --skip-themes", nil, f)
 	f.Close()
 	st, serr := os.Stat(dump)
 	if err != nil || serr != nil || st.Size() == 0 {

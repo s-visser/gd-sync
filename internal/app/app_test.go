@@ -272,6 +272,141 @@ func TestMerge(t *testing.T) {
 	}
 }
 
+// main holding work that never reached the server — an unpushed merge, a
+// failed deploy — must survive a sync: the server not having a file main
+// added is not the server deleting it.
+func TestSyncKeepsWorkThatWasNeverDeployed(t *testing.T) {
+	w := newWorld(t, "wordpress", "wp-content", "")
+	w.write(w.server, "wp-content/themes/t/style.css", "body{}\n")
+	w.write(w.server, "wp-content/themes/t/contract.php", "contract\n")
+	w.write(w.server, "wp-content/plugins/p/p.php", "v1\n")
+	w.mustGD("sync")
+	w.git("branch", "develop")
+
+	// develop's work lands on main, but is never pushed or deployed.
+	w.git("checkout", "-q", "develop")
+	w.write(w.repo, "wp-content/mu-plugins/no-user-input.php", "<?php // off\n")
+	w.write(w.repo, "wp-content/themes/t/style.css", "body{color:red}\n")
+	w.git("rm", "-q", "wp-content/themes/t/contract.php")
+	w.git("add", "-A")
+	w.git("commit", "-qm", "Remove contract page and disable all user input")
+	w.git("checkout", "-q", "main")
+	w.git("merge", "-q", "--no-ff", "--no-edit", "develop")
+	w.git("checkout", "-q", "develop")
+
+	// Meanwhile the server updates a plugin and gains a file.
+	w.write(w.server, "wp-content/plugins/p/p.php", "v2\n")
+	w.write(w.server, "wp-content/plugins/p/extra.php", "extra\n")
+
+	// merge: the sync must keep main's work, and the deploy must ship it.
+	w.mustGD("merge", "develop")
+	for path, want := range map[string]string{
+		"wp-content/mu-plugins/no-user-input.php": "<?php // off\n",
+		"wp-content/themes/t/style.css":           "body{color:red}\n",
+		"wp-content/themes/t/contract.php":        "<missing>",
+		"wp-content/plugins/p/p.php":              "v2\n",
+		"wp-content/plugins/p/extra.php":          "extra\n",
+	} {
+		if got := w.read(w.server, path); got != want {
+			t.Errorf("server %s = %q, want %q", path, got, want)
+		}
+		if got := w.read(w.repo, path); got != want {
+			t.Errorf("develop %s = %q, want %q", path, got, want)
+		}
+	}
+	if s := w.git("log", "-1", "--format=%B", "main"); strings.Contains(s, "[server-sync]") {
+		t.Errorf("main's tip is tagged [server-sync], so the deploy worker would skip main's work: %q", s)
+	}
+	if s := w.git("log", "-1", "--format=%s", "main^2"); !strings.HasPrefix(s, "[server-sync]") {
+		t.Errorf("the merged-in parent should be the server snapshot, is %q", s)
+	}
+
+	// Everything is live now: the next sync has nothing to do.
+	head := w.git("rev-parse", "main")
+	w.mustGD("sync")
+	if w.git("rev-parse", "main") != head {
+		t.Error("a sync after the deploy made a commit")
+	}
+}
+
+// A [server-sync] commit that wrongly removed main's file is undone with git
+// revert, whose subject quotes the tag. That revert is ordinary work: it must
+// deploy, and it is not where main last matched the server.
+func TestRevertedSnapshotDeploys(t *testing.T) {
+	w := newWorld(t, "wordpress", "wp-content", "")
+	w.write(w.server, "wp-content/style.css", "body{}\n")
+	w.mustGD("sync")
+
+	// What an older gd-sync did: drop a never-deployed file as a "server" change.
+	w.write(w.repo, "wp-content/mu-plugins/no-user-input.php", "<?php // off\n")
+	w.git("add", "-A")
+	w.git("commit", "-qm", "disable all user input")
+	w.git("rm", "-q", "wp-content/mu-plugins/no-user-input.php")
+	w.git("commit", "-qm", "[server-sync] Live server state 2026-11-12 10:00")
+	w.git("revert", "--no-edit", "HEAD")
+	if s := w.git("log", "-1", "--format=%s"); !strings.Contains(s, "[server-sync]") {
+		t.Fatalf("expected the revert to quote the tag, subject is %q", s)
+	}
+
+	w.mustGD("deploy")
+	if got := w.read(w.server, "wp-content/mu-plugins/no-user-input.php"); got != "<?php // off\n" {
+		t.Errorf("the reverted file didn't go live: %q", got)
+	}
+}
+
+// When main's unsent work and the server changed the same file, the sync
+// stops with a normal git conflict instead of picking one.
+func TestSyncConflictWithUnsentWork(t *testing.T) {
+	w := newWorld(t, "wordpress", "wp-content", "")
+	w.write(w.server, "wp-content/style.css", "body{}\n")
+	w.mustGD("sync")
+
+	w.write(w.repo, "wp-content/style.css", "body{color:blue}\n")
+	w.git("commit", "-qam", "blue, not deployed")
+	w.write(w.server, "wp-content/style.css", "body{color:green}\n")
+
+	err := w.gd("sync")
+	if err == nil || !strings.Contains(err.Error(), "git merge --continue") {
+		t.Fatalf("conflicting sync: err = %v", err)
+	}
+	if got := w.read(w.server, "wp-content/style.css"); got != "body{color:green}\n" {
+		t.Errorf("a sync touched the server: %q", got)
+	}
+
+	w.write(w.repo, "wp-content/style.css", "body{color:teal}\n")
+	w.git("add", "-A")
+	if out, err := exec.Command("git", "-C", w.repo, "-c", "core.editor=true", "merge", "--continue").CombinedOutput(); err != nil {
+		t.Fatalf("merge --continue: %v\n%s", err, out)
+	}
+	w.mustGD("sync")
+	w.mustGD("deploy")
+	if got := w.read(w.server, "wp-content/style.css"); got != "body{color:teal}\n" {
+		t.Errorf("the resolution didn't go live: %q", got)
+	}
+}
+
+// With no sync or deploy on record, main's first commit is the base: files
+// committed after it are main's own, not deletions on the server.
+func TestSyncWithoutRecordKeepsLocalWork(t *testing.T) {
+	w := newWorld(t, "wordpress", "wp-content", "")
+	w.write(w.server, "wp-content/theirs.php", "live\n")
+	w.write(w.repo, "wp-content/mine.php", "mine\n")
+	w.git("add", "-A")
+	w.git("commit", "-qm", "local work")
+
+	w.mustGD("sync")
+	if got := w.read(w.repo, "wp-content/mine.php"); got != "mine\n" {
+		t.Errorf("sync removed main's own file: %q", got)
+	}
+	if got := w.read(w.repo, "wp-content/theirs.php"); got != "live\n" {
+		t.Errorf("sync didn't bring in the server's file: %q", got)
+	}
+	w.mustGD("deploy")
+	if got := w.read(w.server, "wp-content/mine.php"); got != "mine\n" {
+		t.Errorf("deploy didn't ship main's file: %q", got)
+	}
+}
+
 // A GitHub runner has a fresh clone: no local state at all. Deploy must work
 // from git history and the record on the server alone.
 func TestDeployFromFreshClone(t *testing.T) {

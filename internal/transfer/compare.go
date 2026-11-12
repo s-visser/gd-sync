@@ -22,12 +22,62 @@ type Comparison struct {
 	// Fetched holds, for every New and Changed path, the temp file with the
 	// server's copy.
 	Fetched map[string]Fetched
+
+	// Blobs is the blob id of every server file whose content is known — all
+	// of them except Skipped. Files that weren't fetched are main's blob.
+	Blobs map[string]string
 }
 
 // Settled is the state to remember when main is left as it was: everything
 // except the paths where main and the server disagree.
-func (c *Comparison) Settled() State {
-	return Settle(c.Server, c.Main, concat(c.New, c.Changed, c.Skipped))
+func (c *Comparison) Settled() State { return c.Matching(c.Main) }
+
+// Matching is the state to remember for tree: the server files known to hold
+// exactly what tree holds.
+func (c *Comparison) Matching(t Tree) State {
+	s := State{}
+	for p, f := range c.Server {
+		if b, ok := t[p]; ok && c.Blobs[p] == b.ID {
+			s[p] = Known{f.Size, f.Mtime, b.ID}
+		}
+	}
+	return s
+}
+
+// Since is what the server changed relative to base, a tree that once
+// matched it: the blob each new or changed path has now, and the paths it no
+// longer has. Paths leave says to leave alone, and paths whose content is
+// unknown (Skipped), are left out.
+func (c *Comparison) Since(base Tree, leave func(string) bool) (put map[string]string, del []string) {
+	put = map[string]string{}
+	for p := range c.Server {
+		if id, ok := c.Blobs[p]; ok && id != base[p].ID && !leave(p) {
+			put[p] = id
+		}
+	}
+	for p := range base {
+		if _, ok := c.Server[p]; !ok && !leave(p) {
+			del = append(del, p)
+		}
+	}
+	sort.Strings(del)
+	return put, del
+}
+
+// Unsent lists the paths main changed since base that the server doesn't
+// hold main's version of: what a deploy would still have to ship.
+func (c *Comparison) Unsent(base, main Tree) []string {
+	var out []string
+	for _, p := range ChangedPaths(base, main) {
+		id, known := c.Blobs[p]
+		if _, listed := c.Server[p]; listed && !known {
+			continue
+		}
+		if id != main[p].ID {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // Compare lists the server, decides which files could have changed since
@@ -48,7 +98,13 @@ func Compare(conn *remote.Conn, repo gitx.Repo, root string, m Matcher, known St
 	}
 
 	cand, gone := PullPlan(known, main, server)
-	c := &Comparison{Server: server, Main: main, Gone: gone, Fetched: map[string]Fetched{}}
+	c := &Comparison{Server: server, Main: main, Gone: gone, Fetched: map[string]Fetched{}, Blobs: map[string]string{}}
+	for p := range server {
+		c.Blobs[p] = main[p].ID
+	}
+	for _, p := range cand {
+		delete(c.Blobs, p)
+	}
 	if len(cand) > 0 {
 		ui.Info("fetching %d file(s) whose size or date moved, %s", len(cand), ui.Size(server.Size(cand)))
 		progress := ui.NewProgress(server.Size(cand), len(cand))
@@ -59,6 +115,9 @@ func Compare(conn *remote.Conn, repo gitx.Repo, root string, m Matcher, known St
 		}
 		for _, p := range cand {
 			f, ok := got[p]
+			if ok {
+				c.Blobs[p] = f.ID(lfs(p))
+			}
 			switch {
 			case !ok:
 				c.Skipped = append(c.Skipped, p)
@@ -167,12 +226,4 @@ func ServerBlobs(conn *remote.Conn, root string, paths []string, server Manifest
 		blobs[p] = f.ID(lfs(p))
 	}
 	return blobs, nil
-}
-
-func concat(lists ...[]string) []string {
-	var out []string
-	for _, l := range lists {
-		out = append(out, l...)
-	}
-	return out
 }

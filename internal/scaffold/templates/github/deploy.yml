@@ -2,6 +2,7 @@ name: Deploy main to server
 
 # main IS the server. Anything that lands on main gets pushed live.
 # Commits made BY the sync worker are skipped — they already came from the server.
+# Only a message that starts with the tag counts, so reverting a snapshot deploys.
 #
 # It runs 'gd-sync deploy' — the same command as on your computer. It uploads
 # only what main changed since the last sync or deploy, deletes only files git
@@ -21,7 +22,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ !contains(github.event.head_commit.message, '[server-sync]') }}
+    if: ${{ !startsWith(github.event.head_commit.message, '[server-sync]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

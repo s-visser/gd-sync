@@ -13,11 +13,21 @@ import (
 	"strings"
 )
 
-type Repo struct{ Dir string }
+type Repo struct {
+	Dir string
+	env []string
+}
+
+// With is the same repo with extra environment variables for git, such as
+// GIT_INDEX_FILE for a scratch index.
+func (r Repo) With(env ...string) Repo {
+	r.env = append(append([]string{}, r.env...), env...)
+	return r
+}
 
 func (r Repo) cmd(args ...string) *exec.Cmd {
 	c := exec.Command("git", append([]string{"-C", r.Dir}, args...)...)
-	c.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	c.Env = append(append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), r.env...)
 	return c
 }
 
@@ -119,7 +129,13 @@ func (r Repo) GitDir() (string, error) {
 // Commit commits what is staged as gd-sync itself, so server snapshots are
 // recognisable and don't need a configured identity.
 func (r Repo) Commit(msg string) error {
-	return r.Quiet("-c", "user.email=gd-sync@local", "-c", "user.name=gd-sync", "commit", "-q", "-m", msg)
+	return r.Quiet(AsGDSync("commit", "-q", "-m", msg)...)
+}
+
+// AsGDSync prefixes git arguments with the settings that record gd-sync as
+// the author.
+func AsGDSync(args ...string) []string {
+	return append([]string{"-c", "user.email=gd-sync@local", "-c", "user.name=gd-sync"}, args...)
 }
 
 // NUL joins paths for git's --pathspec-file-nul and tar's --null.

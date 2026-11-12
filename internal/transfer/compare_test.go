@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"maps"
 	"os/exec"
 	"slices"
 	"strings"
@@ -91,5 +92,35 @@ func TestBlobIDMatchesGit(t *testing.T) {
 	got, err := BlobID(strings.NewReader(content), int64(len(content)))
 	if err != nil || got != strings.TrimSpace(string(want)) {
 		t.Errorf("BlobID = %s, git says %s", got, want)
+	}
+}
+
+func TestSinceAndUnsent(t *testing.T) {
+	// base is what the server had at the last sync; main moved on since.
+	base := Tree{"same": {ID: "s"}, "edited-live": {ID: "a"}, "deleted-live": {ID: "b"},
+		"edited-here": {ID: "c"}, "deleted-here": {ID: "d"}, "held": {ID: "h"}, "skipped": {ID: "k"}}
+	main := Tree{"same": {ID: "s"}, "edited-live": {ID: "a"}, "deleted-live": {ID: "b"},
+		"edited-here": {ID: "c2"}, "added-here": {ID: "e"}, "held": {ID: "h"}, "skipped": {ID: "k"}}
+	c := &Comparison{
+		Server: Manifest{"same": {}, "edited-live": {}, "edited-here": {}, "deleted-here": {},
+			"added-live": {}, "held": {}, "skipped": {}},
+		Blobs: map[string]string{"same": "s", "edited-live": "a2", "edited-here": "c",
+			"deleted-here": "d", "added-live": "f", "held": "h2"},
+		Skipped: []string{"skipped"},
+	}
+	put, del := c.Since(base, func(p string) bool { return p == "held" })
+	if want := map[string]string{"edited-live": "a2", "added-live": "f"}; !maps.Equal(put, want) {
+		t.Errorf("put = %v, want %v", put, want)
+	}
+	if want := []string{"deleted-live"}; !slices.Equal(del, want) {
+		t.Errorf("del = %v, want %v", del, want)
+	}
+	// Main's own changes are what a deploy still has to ship.
+	if got, want := c.Unsent(base, main), []string{"added-here", "deleted-here", "edited-here"}; !slices.Equal(got, want) {
+		t.Errorf("unsent = %v, want %v", got, want)
+	}
+	// Only files known to match main are remembered.
+	if got := c.Matching(main); len(got) != 1 || got["same"].Blob != "s" {
+		t.Errorf("matching = %v", got)
 	}
 }

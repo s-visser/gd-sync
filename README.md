@@ -243,12 +243,19 @@ git until the next sync in a terminal asks.
 
 1. **`gd-sync sync`** copies the live server onto `main` and commits it as
    `[server-sync] …`. It also runs nightly in GitHub Actions, so `main` stays
-   honest even if nobody touches the repo for a year.
+   honest even if nobody touches the repo for a year. When `main` holds work
+   that never went live (an unpushed merge, or a deploy that failed), copying
+   would undo that work. In that case sync commits the server's state as a
+   `[server-sync]` snapshot on top of the last commit known to be live, and
+   merges it into `main`. Your work stays, and a file both sides changed
+   becomes a normal Git conflict. The commit on top is a merge rather than a
+   snapshot, so pushing it deploys your work.
 
 2. **Push to `main` → deploy worker.** `deploy.yml` runs `gd-sync deploy`: it
-   backs up the server, then ships what `main` changed. Commits tagged
-   `[server-sync]` are skipped, so a sync can't trigger a pointless redeploy of
-   what just came down.
+   backs up the server, then ships what `main` changed. Commits whose message
+   starts with `[server-sync]` are skipped, so a sync can't trigger a pointless
+   redeploy of what just came down. Only the start counts: reverting a sync
+   (`Revert "[server-sync] …"`) is your own work, and deploys.
 
 3. **`gd-sync merge`** is the only sanctioned route into `main`: server first, then
    your branch, then push. If the server changed under you, you get a normal Git
@@ -279,7 +286,8 @@ SSH connection.
   GitHub workers use it, and `gd-sync merge` skips the copy too.
 - **deploy** looks at what changed in `main` since the last commit known to be
   live — the last deploy, which is recorded on the server in `~/.gd-sync/`, or
-  the last `[server-sync]` snapshot. For each of those files it checks what the
+  the newest `[server-sync]` snapshot in `main`'s history, including one a sync
+  merged in. For each of those files it checks what the
   server holds right now:
   - still the old version: upload the new one, or delete it if `main` did;
   - already the new version: nothing to do;
@@ -469,7 +477,7 @@ Pulling or restoring a database carries that revision with it; a fresh GitHub
 runner needs no local migration state. Deploy checks pending revisions before
 upload, backs up both the live database and existing maintained files, uploads
 code and vendor builds, then runs upgrades. A migration-only commit runs too.
-`[server-sync]` commits skip deployment and migrations entirely. Migrations are
+Commits whose subject starts with `[server-sync]` skip deployment and migrations entirely. Migrations are
 sent through [WP-CLI's stdin runner](https://developer.wordpress.org/cli/commands/eval-file/)
 and never uploaded into the public web root or replaced by a server sync.
 

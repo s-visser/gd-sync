@@ -141,22 +141,6 @@ func (s State) Save(path string) error {
 	return os.WriteFile(path, b.Bytes(), 0o644)
 }
 
-// Settle builds the state to remember: every server file whose content is
-// known to match the given tree, except the paths in leaveOut.
-func Settle(server Manifest, t Tree, leaveOut []string) State {
-	out := map[string]bool{}
-	for _, p := range leaveOut {
-		out[p] = true
-	}
-	s := State{}
-	for p, f := range server {
-		if b, ok := t[p]; ok && !out[p] {
-			s[p] = Known{f.Size, f.Mtime, b.ID}
-		}
-	}
-	return s
-}
-
 // WarnCaseClashes warns about server paths that differ only in case, which
 // can't both exist in one folder on Windows or macOS.
 func WarnCaseClashes(man Manifest) {

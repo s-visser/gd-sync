@@ -14,6 +14,16 @@ import (
 	"github.com/s-visser/gd-sync/internal/ui"
 )
 
+// remoteWP is how WP-CLI is started on the server. Command-line PHP ignores the
+// site's .user.ini, so its memory_limit is often far below what the site needs
+// to boot (128M vs 1024M); pass the site's own limit, as recorded in php_ini.
+func (c *ctx) remoteWP() string {
+	if m := strings.TrimSpace(c.s.PHPIni["memory_limit"]); m != "" {
+		return "php -d " + remote.Quote("memory_limit="+m) + " ~/wp-cli.phar"
+	}
+	return "~/wp-cli.phar"
+}
+
 // wpRun keeps arguments separate locally and quotes every word on SSH. In
 // particular, eval code and option values must never become shell commands.
 func (c *ctx) wpRun(local bool, args []string, in io.Reader, out io.Writer) error {
@@ -22,7 +32,7 @@ func (c *ctx) wpRun(local bool, args []string, in io.Reader, out io.Writer) erro
 		if err != nil {
 			return err
 		}
-		return conn.Run("cd "+remote.Quote(c.s.RemoteRoot)+" && ~/wp-cli.phar "+remote.QuoteAll(args), in, out)
+		return conn.Run("cd "+remote.Quote(c.s.RemoteRoot)+" && "+c.remoteWP()+" "+remote.QuoteAll(args), in, out)
 	}
 	argv := append([]string{"--path=/var/www/html"}, args...)
 	var cmd *exec.Cmd
@@ -150,7 +160,7 @@ func (c *ctx) backupDB(protect ...string) (string, error) {
 	name := c.backupPrefix() + stamp("20060102-150405.000000000") + ".sql"
 	p := backupPath(name)
 	ui.Step("Backing up the LIVE database")
-	cmd := "umask 077 && mkdir -p ~/gd-sync-backups && cd " + remote.Quote(c.s.RemoteRoot) + " && ~/wp-cli.phar db export " + p + ".partial --single-transaction --quick --default-character-set=utf8mb4 --skip-plugins --skip-themes && test -s " + p + ".partial && mv " + p + ".partial " + p
+	cmd := "umask 077 && mkdir -p ~/gd-sync-backups && cd " + remote.Quote(c.s.RemoteRoot) + " && " + c.remoteWP() + " db export " + p + ".partial --single-transaction --quick --default-character-set=utf8mb4 --skip-plugins --skip-themes && test -s " + p + ".partial && mv " + p + ".partial " + p
 	if err := conn.Run(cmd, nil, os.Stdout); err != nil {
 		_ = conn.Run("rm -f -- "+p+".partial", nil, nil)
 		return "", fmt.Errorf("Database backup failed; live write stopped: %w", err)
@@ -211,7 +221,7 @@ func cmdDBRestore(c *ctx, name string) error {
 	}
 	// Stream the selected file through stdin: WP-CLI needs a real server path,
 	// and ~ inside a quoted WP-CLI argument would otherwise stay literal.
-	cmd := "cd " + remote.Quote(c.s.RemoteRoot) + " && ~/wp-cli.phar db import - < " + backupPath(name)
+	cmd := "cd " + remote.Quote(c.s.RemoteRoot) + " && " + c.remoteWP() + " db import - < " + backupPath(name)
 	if err := conn.Run(cmd, nil, os.Stdout); err != nil {
 		return fmt.Errorf("Restore failed: %w\nPre-restore backup: %s", err, rescue)
 	}
